@@ -31,7 +31,7 @@ def assign_labels(subtrees: list) -> dict:
 def get_data(roots: list, nodes: list, node_ids: dict, labels: dict, MAX_TOKENS: int, PAD_ID: int) -> dict:
     sample_tokens = {}  # node_id -> [MAX_TOKENS] of int ids (including PAD_ID)
     sample_masks = {}   # node_id -> [MAX_TOKENS] of 1/0
-    train_nodes = []
+    all_nodes = []
 
     vocab_size = len(nodes) + 1  
 
@@ -57,10 +57,10 @@ def get_data(roots: list, nodes: list, node_ids: dict, labels: dict, MAX_TOKENS:
         
         sample_tokens[u_id] = token_ids
         sample_masks[u_id] = mask
-        train_nodes.append(u_id)
+        all_nodes.append(u_id)
     
     return {
-        "train_nodes": train_nodes,
+        "nodes": all_nodes,
         "labels": labels,
         "sample_tokens": sample_tokens,
         "sample_masks": sample_masks,
@@ -74,8 +74,9 @@ def get_data(roots: list, nodes: list, node_ids: dict, labels: dict, MAX_TOKENS:
 def build_dataset() -> dict:
     roots = [
         wn.synset('animal.n.01'),
-        wn.synset('plant.n.02'),
-        wn.synset('person.n.01'),
+        wn.synset('group.n.01'),
+        wn.synset('mammal.n.01'),
+        wn.synset('location.n.01')
     ]
 
     subtrees = get_subtrees(roots)

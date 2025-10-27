@@ -2,6 +2,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
+    seed: int = 42
+
     # Dataset parameters
     batch_size: int = 128
     shuffle: bool = True
@@ -10,11 +12,11 @@ class Config:
     max_tokens: int = 20
 
     # Model parameters
-    vocab_size: int = 0          # filled later from data_pkg
-    pad_id: int = 0              # filled later from data_pkg
-    dim_embed: int = 64          # embedding / attention dimension
-    num_classes: int = 0         # filled later from data_pkg
-    use_multihead: bool = False  # single-head baseline
+    vocab_size: int = 0       
+    pad_id: int = 0              
+    dim_embed: int = 2         
+    num_classes: int = 0        
+    use_multihead: bool = False  
 
     # Training parameters
     lr: float = 1e-3

@@ -2,12 +2,24 @@ import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
+import random
+import numpy as np
+
 from wordnet import build_dataset
 from data import get_dataloader
 from model import Classifier
 from metrics import loss_fn, accuracy_fn
 
 from config import Config
+
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def train_epoch(model, dataloader: DataLoader, optimizer: optim.Optimizer, device: torch.device) -> tuple:
     model.train()
@@ -55,6 +67,7 @@ def eval_epoch(model, dataloader: DataLoader, device: torch.device) -> tuple:
 
 def main():
     cfg = Config()
+    set_seed(cfg.seed)
     data = build_dataset()
 
     # fill model-dependent values from data
@@ -74,13 +87,15 @@ def main():
     if cfg.device.type == "mps":  # warm up MPS if using Metal backend
         _ = torch.ones(1, device=cfg.device) * 1
 
+    print("Configuration:", cfg)
     print(f"Using device: {cfg.device}")
 
     # dataloader
-    train_loader = get_dataloader(
+    train_loader, val_loader = get_dataloader(
         data,
-        batch_size = cfg.batch_size,
-        shuffle = cfg.shuffle,
+        batch_size=cfg.batch_size,
+        shuffle=cfg.shuffle,
+        val_frac=0.2,
     )
 
     # model
@@ -95,11 +110,15 @@ def main():
 
     # training loop
     for epoch in range(cfg.num_epochs):
-        train_loss, train_acc = train_epoch(model, train_loader, optimizer, cfg.device)
+        tr_loss, tr_acc = train_epoch(model, train_loader, optimizer, cfg.device)
+        val_loss, val_acc = eval_epoch(model, val_loader, cfg.device)
+
         print({
             "epoch": epoch,
-            "train_loss": train_loss,
-            "train_acc": train_acc,
+            "train_loss": tr_loss,
+            "train_acc": tr_acc,
+            "val_loss": val_loss,
+            "val_acc": val_acc,
         })
 
 if __name__ == "__main__":
