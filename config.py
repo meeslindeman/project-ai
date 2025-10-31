@@ -14,9 +14,13 @@ class Config:
     # Model parameters
     vocab_size: int = 0       
     pad_id: int = 0              
-    dim_embed: int = 2         
+    dim_embed: int = 10         
     num_classes: int = 0        
     use_multihead: bool = False  
+
+    model_type: str = "hyp"      # "hyp" or "euclidean"
+    attention_type: str = "full"  # "full" or "linear_focused"
+    num_heads: int = 1            # number of attention heads
 
     # Training parameters
     lr: float = 1e-3

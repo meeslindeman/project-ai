@@ -4,11 +4,15 @@ from torch.utils.data import DataLoader
 
 import random
 import numpy as np
+import argparse
 
 from wordnet import build_dataset
 from data import get_dataloader
 from model import Classifier
 from metrics import loss_fn, accuracy_fn
+
+from hypformer.lorentz import Lorentz
+from hypformer.classifier import HypClassifier
 
 from config import Config
 
@@ -77,9 +81,9 @@ def main():
     cfg.max_tokens = data["max_tokens"]
 
     # device setup
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and cfg.device == "cuda":
         cfg.device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
+    elif torch.backends.mps.is_available() and cfg.device == "cuda":
         cfg.device = torch.device("mps")
     else:
         cfg.device = torch.device("cpu")
@@ -99,12 +103,26 @@ def main():
     )
 
     # model
-    model = Classifier(
-        vocab_size = cfg.vocab_size,
-        pad_id = cfg.pad_id,
-        embed_dim = cfg.dim_embed,
-        num_classes = cfg.num_classes,
-    ).to(cfg.device)
+    if cfg.model_type == "hyp":
+        model = HypClassifier(
+            manifold=Lorentz(),
+            vocab_size=cfg.vocab_size,
+            pad_id=cfg.pad_id,
+            embed_dim=cfg.dim_embed,
+            num_classes=cfg.num_classes,
+            num_heads=cfg.num_heads,                  # new in cfg
+            attention_type=cfg.attention_type,        # "full" or "linear_focused"
+            trans_heads_concat=False,
+            use_weight=True,
+            embed_scale=getattr(cfg, "embed_scale", 0.1),
+        ).to(cfg.device)
+    else:
+        model = Classifier(
+            vocab_size = cfg.vocab_size,
+            pad_id = cfg.pad_id,
+            embed_dim = cfg.dim_embed,
+            num_classes = cfg.num_classes,
+        ).to(cfg.device)
 
     optimizer = optim.Adam(model.parameters(), lr=cfg.lr)
 
