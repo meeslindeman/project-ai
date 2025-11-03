@@ -5,7 +5,6 @@ import operator
 import torch
 import geoopt
 
-
 max_norm = 85
 eps = 1e-8
 

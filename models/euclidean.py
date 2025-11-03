@@ -24,7 +24,7 @@ class Attention(nn.Module):
         return output
 
 class Classifier(nn.Module):
-    def __init__(self, vocab_size: int, pad_id: int, embed_dim: int, num_classes: int) -> None:
+    def __init__(self, vocab_size: int, pad_id: int, embed_dim: int, num_classes: int, **kwargs) -> None:
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_id)
         self.attention = Attention(embed_dim)

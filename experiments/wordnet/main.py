@@ -1,15 +1,19 @@
+import sys
+from pathlib import Path
+
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 import torch
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-
 import random
 import numpy as np
 import argparse
 
-from model import Classifier
-from dataloader import get_dataloader
-from metrics import loss_fn, accuracy_fn, f1_fn
+from experiments.wordnet.dataloader import get_dataloader
+from experiments.wordnet.metrics import loss_fn, accuracy_fn, f1_fn
 
 def set_seed(seed: int) -> None:
     random.seed(seed)
@@ -89,18 +93,21 @@ def main(args):
     vocab_size = info['vocab_size']
     num_classes = info['num_classes']
 
-    print(f"\nVocab size: {vocab_size}")
-    print(f"Num classes: {num_classes}")
-
-    if args.model == 'Euclidean':
-        model = Classifier(
-            vocab_size=vocab_size,
-            pad_id=0,
-            embed_dim=args.embed_dim,
-            num_classes=num_classes
-        ).to(device)
+    print(f"\nLoading model: {args.model}")
+    if args.model == 'euclidean':
+        from models.euclidean import Classifier
+    elif args.model == 'hypformer':
+        from models.hypformer.model import Classifier
     else:
-        model = None
+        raise ValueError(f"Unknown model: {args.model}")
+
+    model = Classifier(
+        vocab_size=vocab_size,
+        pad_id=0,
+        embed_dim=args.embed_dim,
+        num_classes=num_classes,
+        args=args  
+    ).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
@@ -131,7 +138,7 @@ if __name__ == "__main__":
     parser.add_argument('--num_workers', type=int, default=0, help='Number of data loading workers')
     
     # Model args
-    parser.add_argument('--model', type=str, default="Euclidean", help="Which model to train")
+    parser.add_argument('--model', type=str, default="euclidean", help="Which model to train")
     parser.add_argument('--embed_dim', type=int, default=128, help='Embedding dimension')
     
     # Training args

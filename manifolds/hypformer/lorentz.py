@@ -5,8 +5,9 @@ import geoopt
 from geoopt import Manifold
 from geoopt import Lorentz as LorentzOri
 from geoopt.utils import size2shape
-import hypformer.lorentz_math as math
-from hypformer.utils import acosh
+import manifolds.hypformer.lorentz_math as math
+from manifolds.hypformer.utils import acosh
+
 
 class Lorentz(LorentzOri):
     def __init__(self, k=1.0, learnable=False):
