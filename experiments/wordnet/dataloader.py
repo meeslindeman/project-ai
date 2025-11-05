@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import DataLoader, Dataset
-from dataset import prepare_dataset
+from .dataset import prepare_dataset
 
 class WordNetDataset(Dataset):
     def __init__(self, examples: list):

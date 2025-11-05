@@ -85,8 +85,6 @@ def main(args):
 
     train_loader, val_loader, test_loader, info = get_dataloader(
         batch_size=args.batch_size,
-        test_size=args.test_size,
-        val_size=args.val_size,
         num_workers=args.num_workers
     )
 
@@ -96,18 +94,26 @@ def main(args):
     print(f"\nLoading model: {args.model}")
     if args.model == 'euclidean':
         from models.euclidean import Classifier
+        model = Classifier(
+            vocab_size=vocab_size,
+            pad_id=0,
+            embed_dim=args.embed_dim,
+            num_classes=num_classes,
+            args=args  
+        ).to(device)
     elif args.model == 'hypformer':
+        print(f"Model specifics: {args.att_type} | {args.decoder}")
         from models.hypformer.model import Classifier
+        model = Classifier(
+            vocab_size=vocab_size,
+            pad_id=0,
+            embed_dim=args.embed_dim,
+            num_classes=num_classes,
+            att_type=args.att_type,
+            decoder_type=args.decoder,
+        ).to(device)
     else:
         raise ValueError(f"Unknown model: {args.model}")
-
-    model = Classifier(
-        vocab_size=vocab_size,
-        pad_id=0,
-        embed_dim=args.embed_dim,
-        num_classes=num_classes,
-        args=args  
-    ).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
@@ -133,13 +139,15 @@ if __name__ == "__main__":
     
     # Data args
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
-    parser.add_argument('--test_size', type=float, default=0.10, help='Test set proportion')
-    parser.add_argument('--val_size', type=float, default=0.10, help='Validation set proportion')
     parser.add_argument('--num_workers', type=int, default=0, help='Number of data loading workers')
     
     # Model args
     parser.add_argument('--model', type=str, default="euclidean", help="Which model to train")
     parser.add_argument('--embed_dim', type=int, default=128, help='Embedding dimension')
+
+    # Hypformer
+    parser.add_argument('--att_type', type=str, default="full", help="('full', 'focus_attention')")
+    parser.add_argument('--decoder', type=str, default="linear", help="('cls', 'linear')")
     
     # Training args
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
