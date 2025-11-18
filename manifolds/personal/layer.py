@@ -2,7 +2,7 @@
 
 import torch
 import torch.nn as nn
-from lorentz import Lorentz
+from .lorentz import Lorentz
 
 class LorentzFC(nn.Module):
     def __init__(self, in_features: int, out_features: int, manifold: Lorentz = Lorentz(0.1), reset_params: str = "eye", activation: nn.Module = nn.functional.relu) -> None:
@@ -13,7 +13,6 @@ class LorentzFC(nn.Module):
         self.V_auxiliary = nn.Parameter(torch.randn(in_features+1, out_features))
         self.reset_parameters(reset_params)
         self.activation = activation
-
     
     def reset_parameters(self, reset_params: str = "eye") -> None:
         in_features, out_features = self.U.shape
@@ -67,3 +66,15 @@ class LorentzFC(nn.Module):
 
     def mlr(self, x):
         return self.signed_dist2hyperplanes_scaled_angle(x)
+
+class LorentzMLR(nn.Module):
+    """A fully connected layer in the Lorentz model. with identity activation."""
+    # the activation is the identity
+    def __init__(self, in_features: int, out_features: int, k: float = 0.1, reset_params: str = "kaiming", activation: nn.Module = nn.Identity()) -> None:
+        super().__init__()
+        self.manifold = Lorentz(k)
+        self.linear = LorentzFC(in_features, out_features, self.manifold, reset_params, activation)
+    
+    def forward(self, x):
+        x = self.manifold.expmap0(x)
+        return self.linear.compute_output_space(x) 

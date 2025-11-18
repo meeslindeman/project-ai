@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from manifolds.hypformer import Lorentz
-from manifolds.hypformer.layer import HypLinear
+from manifolds.hypformer import HypLinear
 
 class HypformerAttention(nn.Module):
     def __init__(self, manifold: Lorentz, input_dim: int, att_type: str = "full", num_heads: int = 1, use_weight: bool = True, heads_concat: bool = False) -> None:
@@ -15,9 +15,7 @@ class HypformerAttention(nn.Module):
         self.use_weight = use_weight
         self.heads_concat = heads_concat
 
-        assert input_dim % num_heads == 0, \
-            f"input_dim ({input_dim}) must be divisible by num_heads ({num_heads})"
-        self.head_dim = input_dim // num_heads
+        self.head_dim = input_dim
 
         self.Wk = nn.ModuleList()
         self.Wq = nn.ModuleList()
@@ -37,18 +35,6 @@ class HypformerAttention(nn.Module):
             self.norm_scale = nn.Parameter(torch.ones(()))
             self.power_k = 2.0
             self.v_map_mlp = nn.Linear(self.head_dim, self.head_dim, bias=True)
-        
-        if heads_concat:
-            raise NotImplementedError(
-                "heads_concat=True not implemented in original code "
-                "(references undefined self.final_linear)"
-            )
-        
-        if num_heads > 1:
-            raise NotImplementedError(
-                "Multi-head (num_heads > 1) creates dimension mismatch. "
-                "Use num_heads=1 for now. Multi-head support is future work."
-            )
 
     
     @staticmethod
@@ -59,7 +45,7 @@ class HypformerAttention(nn.Module):
     
     def full_attention(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, mask: torch.Tensor, output_attn: bool = False) -> torch.Tensor:
         B, N, H, D = query.shape                                    # [B, N, H, D]
-
+        
         query = query.transpose(1, 2)                               # [B, H, N, D]
         key = key.transpose(1, 2)                                   # [B, H, N, D]
         value = value.transpose(1, 2)                               # [B, H, N, D]
@@ -71,6 +57,7 @@ class HypformerAttention(nn.Module):
             att_weight = att_weight.masked_fill(~mask.unsqueeze(1).unsqueeze(2), float('-inf'))
 
         att_weight = F.softmax(att_weight, dim=-1)                  # [B, H, N, N]
+
         att_output = self.manifold.mid_point(value, att_weight)     # [B, H, N, D]
          
         att_output = att_output.transpose(1, 2)                     # [B, N, H, D]
@@ -78,7 +65,6 @@ class HypformerAttention(nn.Module):
         if self.num_heads == 1:
             att_output = att_output.squeeze(2)                      # [B, N, D]
         else:
-            # Hyperbolic mean over heads (dim=2)
             att_output = self.manifold.mid_point(att_output)        # [B, N, D]
         
         if output_attn:
@@ -87,7 +73,7 @@ class HypformerAttention(nn.Module):
 
     def linear_focus_attention(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, mask: torch.Tensor, output_attn: bool = False) -> torch.Tensor:
         B, N, H, D = query.shape
-
+        
         query = query.transpose(1, 2)                               # [B, H, N, D]
         key = key.transpose(1, 2)                                   # [B, H, N, D]
         value = value.transpose(1, 2)                               # [B, H, N, D]
@@ -128,10 +114,14 @@ class HypformerAttention(nn.Module):
         if self.num_heads == 1:
             attn_output = attn_output.squeeze(2)                    # [B, N, D-1]
 
-        #TODO: trans_head_concat
+        elif self.heads_concat:
+            # attn_output = self.final_linear(attn_output.reshape(-1, self.num_heads * self.out_channels))
+            raise NotImplementedError(
+                "heads_concat=True not implemented in original code "
+                "(references undefined self.final_linear)"
+            )
         
         else:
-            # Mean over heads (Euclidean mean in space dims)
             attn_output = attn_output.mean(dim=2)                   # [B, N, D-1]
 
         attn_output_time = ((attn_output ** 2).sum(dim=-1, keepdims=True) + self.manifold.k) ** 0.5

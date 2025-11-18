@@ -99,7 +99,7 @@ def main(args):
             pad_id=0,
             embed_dim=args.embed_dim,
             num_classes=num_classes,
-            args=args  
+            num_heads=args.num_heads
         ).to(device)
     elif args.model == 'hypformer':
         print(f"Model specifics: {args.att_type} | {args.decoder}")
@@ -111,6 +111,7 @@ def main(args):
             num_classes=num_classes,
             att_type=args.att_type,
             decoder_type=args.decoder,
+            num_heads=args.num_heads
         ).to(device)
     else:
         raise ValueError(f"Unknown model: {args.model}")
@@ -144,6 +145,7 @@ if __name__ == "__main__":
     # Model args
     parser.add_argument('--model', type=str, default="euclidean", help="Which model to train")
     parser.add_argument('--embed_dim', type=int, default=128, help='Embedding dimension')
+    parser.add_argument('--num_heads', type=int, default=1, help="Number of attention heads")
 
     # Hypformer
     parser.add_argument('--att_type', type=str, default="full", help="('full', 'focus_attention')")

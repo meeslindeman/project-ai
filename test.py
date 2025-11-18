@@ -1,52 +1,83 @@
-# test_full_model.py
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
-
 import torch
-from models.hypformer import Classifier
+import torch.nn as nn
 
-print("=" * 60)
-print("TESTING COMPLETE HYPERBOLIC CLASSIFIER")
-print("=" * 60)
+from models.personal.attention import LorentzAttention  # adjust path if needed
 
-# Config
-vocab_size = 1000
-pad_id = 0
-embed_dim = 128
-num_classes = 5
-B, N = 2, 10
 
-# Create model
-model = Classifier(
-    vocab_size=vocab_size,
-    pad_id=pad_id,
-    embed_dim=embed_dim,
-    num_classes=num_classes,
-    att_type='full',
-    decoder_type='linear',
-)
+def sample_lorentz_points(batch_size: int, seq_len: int, dim: int) -> torch.Tensor:
+    """
+    Sample points on the upper sheet of the Lorentz hyperboloid:
+    - spatial part ~ N(0, 1)
+    - time = sqrt(1 + ||x||^2)  (curvature -1)
+    Returns: (B, N, dim), where dim = 1 (time) + (dim-1) (space)
+    """
+    assert dim >= 2, "Need at least 1 time + 1 space dimension"
 
-print(f"✓ Model created")
-print(f"  Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    # spatial: (B, N, dim-1)
+    x_space = torch.randn(batch_size, seq_len, dim - 1)
 
-# Test input
-token_ids = torch.randint(0, vocab_size, (B, N))
-token_ids[:, -2:] = pad_id  # Add some padding
-mask = token_ids != pad_id
+    # norm^2 of spatial part
+    sq_norm = (x_space ** 2).sum(dim=-1, keepdim=True)  # (B, N, 1)
 
-print(f"\nInput shape: {token_ids.shape}")
-print(f"Mask: {mask}")
+    # time coordinate on upper sheet
+    t = torch.sqrt(1.0 + sq_norm)
 
-# Forward pass
-logits = model(token_ids, mask)
+    # concatenate time and space
+    x = torch.cat([t, x_space], dim=-1)  # (B, N, dim)
+    return x
 
-print(f"\n✓ Forward pass successful!")
-print(f"  Output shape: {logits.shape}")
-print(f"  Expected: [{B}, {num_classes}]")
-print(f"  Has NaN: {torch.isnan(logits).any()}")
-print(f"  Sample logits: {logits[0]}")
 
-print("\n" + "=" * 60)
-print("✅ FULL MODEL TEST COMPLETE")
-print("=" * 60)
+def minkowski_norm(x: torch.Tensor) -> torch.Tensor:
+    """
+    Compute Minkowski "norm" (Lorentzian squared distance to origin):
+    〈x, x〉_L = -t^2 + ||x_space||^2
+    x: (..., D) with x[..., 0] = time, x[..., 1:] = space
+    Returns: (...,) tensor of norms.
+    """
+    t = x[..., 0]
+    x_space = x[..., 1:]
+    return -t * t + (x_space ** 2).sum(dim=-1)
+
+
+def is_on_hyperboloid(x: torch.Tensor, atol: float = 1e-4) -> torch.Tensor:
+    """
+    Check if points lie on the hyperboloid -t^2 + ||x||^2 = -1 (curvature -1).
+    Returns a boolean mask with same leading shape as x[..., 0].
+    """
+    mn = minkowski_norm(x)
+    return (mn + 1.0).abs() <= atol
+
+
+def main():
+    torch.manual_seed(0)
+
+    B = 2        # batch size
+    N = 4        # number of tokens
+    D = 5        # Lorentz dimension: 1 time + 4 space
+    H = 1        # number of heads
+
+    # 1. Sample input points on the Lorentz manifold
+    x = sample_lorentz_points(B, N, D)  # (B, N, D)
+
+    print("Input Minkowski norms:", minkowski_norm(x))
+    print("All input on manifold:", bool(is_on_hyperboloid(x).all()))
+
+    # 2. Dummy mask (all tokens valid)
+    mask = torch.ones(B, N, dtype=torch.bool)
+
+    # 3. Instantiate attention
+    attn = LorentzAttention(input_dim=D, num_heads=H, heads_concat=False)
+
+    # 4. Forward pass
+    out = attn(x, mask)  # expected shape: (B, N, D) or similar
+
+    print("Output shape:", out.shape)
+    print("Output Minkowski norms:", minkowski_norm(out))
+
+    on_manifold_mask = is_on_hyperboloid(out)
+    print("All output on manifold:", bool(on_manifold_mask.all()))
+    print("Fraction on manifold:", on_manifold_mask.float().mean().item())
+
+
+if __name__ == "__main__":
+    main()
