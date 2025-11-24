@@ -3,8 +3,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
-from typing import Optional
 
 class Lorentz(nn.Module):
     """Lorentz model for hyperbolic geometry.
@@ -104,21 +102,3 @@ class Lorentz(nn.Module):
         
         # Concatenate time and space to form the Lorentz point
         return torch.cat([time_component, space_components], dim=-1)
-    
-    def mid_point(self, x: torch.Tensor, w: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        Compute the midpoint of points on the manifold.
-
-        Parameters:
-            x (torch.Tensor): Points on the manifold.
-            w (torch.Tensor, optional): Weights for each point. Default is None.
-
-        Returns:
-            torch.Tensor: Midpoint.
-        """
-        if w is not None:
-            ave = w.matmul(x)
-        else:
-            ave = x.mean(dim=-2)
-        denom = (-self.inner(ave, ave, keepdim=True)).abs().clamp_min(1e-8).sqrt()
-        return self.k.sqrt() * ave / denom

@@ -59,7 +59,8 @@ class Arcosh(torch.autograd.Function):
     def forward(ctx, x):
         x = x.clamp(min=1.0 + 1e-15)
         ctx.save_for_backward(x)
-        z = x.double()
+        # z = x.double()
+        z = x.float()
         return (z + torch.sqrt_(z.pow(2) - 1)).clamp_min_(1e-15).log_().to(x.dtype)
 
     @staticmethod

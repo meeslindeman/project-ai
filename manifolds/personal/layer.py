@@ -21,7 +21,7 @@ class LorentzFC(nn.Module):
                 with torch.no_grad():
                     self.U.data.copy_(0.5 * torch.eye(in_features, out_features))
             else:
-                print("'eye' initialization not possible, defaulting to 'kaiming'")
+                # print("'eye' initialization not possible, defaulting to 'kaiming'")
                 with torch.no_grad():
                     self.U.data.copy_(torch.randn(in_features, out_features) * (2 * in_features * out_features) ** -0.5)
             self.a.data.fill_(0.0)
@@ -70,11 +70,13 @@ class LorentzFC(nn.Module):
 class LorentzMLR(nn.Module):
     """A fully connected layer in the Lorentz model. with identity activation."""
     # the activation is the identity
-    def __init__(self, in_features: int, out_features: int, k: float = 0.1, reset_params: str = "kaiming", activation: nn.Module = nn.Identity()) -> None:
+    def __init__(self, in_features: int, out_features: int, k: float = 0.1, reset_params: str = "kaiming", activation: nn.Module = nn.Identity(), input: str = "lorentz") -> None:
         super().__init__()
         self.manifold = Lorentz(k)
         self.linear = LorentzFC(in_features, out_features, self.manifold, reset_params, activation)
+        self.input = input
     
     def forward(self, x):
-        x = self.manifold.expmap0(x)
+        if self.input == "euclidean":
+            x = self.manifold.expmap0(x)
         return self.linear.compute_output_space(x) 

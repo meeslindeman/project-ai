@@ -36,7 +36,6 @@ class HypformerAttention(nn.Module):
             self.power_k = 2.0
             self.v_map_mlp = nn.Linear(self.head_dim, self.head_dim, bias=True)
 
-    
     @staticmethod
     def fp(x: torch.Tensor, p: int = 2) -> torch.Tensor:
         norm_x = torch.norm(x, p=2, dim=-1, keepdim=True)

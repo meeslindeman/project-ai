@@ -113,6 +113,18 @@ def main(args):
             decoder_type=args.decoder,
             num_heads=args.num_heads
         ).to(device)
+    elif args.model == 'personal':
+        from models.personal.model import Classifier
+        model = Classifier(
+            vocab_size=vocab_size,
+            pad_id=0,
+            embed_dim=args.embed_dim,
+            num_classes=num_classes,
+            num_heads=args.num_heads,
+            compute_scores=args.compute_scores,      
+            value_agg=args.value_agg,
+            concat_operation=args.concat_operation
+        ).to(device)
     else:
         raise ValueError(f"Unknown model: {args.model}")
 
@@ -150,6 +162,11 @@ if __name__ == "__main__":
     # Hypformer
     parser.add_argument('--att_type', type=str, default="full", help="('full', 'focus_attention')")
     parser.add_argument('--decoder', type=str, default="linear", help="('cls', 'linear')")
+
+    # Personal model
+    parser.add_argument("--compute_scores", type=str, default="lorentz_inner")
+    parser.add_argument("--value_agg", type=str, default="riemannian")
+    parser.add_argument("--concat_operation", type=str, default="direct")
     
     # Training args
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
