@@ -10,9 +10,10 @@ class Attention(nn.Module):
         self.num_heads = num_heads
         self.head_dim = input_dim // num_heads
 
-        self.W_q = nn.Linear(input_dim, input_dim)
-        self.W_k = nn.Linear(input_dim, input_dim)
-        self.W_v = nn.Linear(input_dim, input_dim)
+        for _ in range(num_heads):
+            self.W_q = nn.Linear(input_dim, input_dim)
+            self.W_k = nn.Linear(input_dim, input_dim)
+            self.W_v = nn.Linear(input_dim, input_dim)
 
         self.W_o = nn.Linear(input_dim, input_dim)
 

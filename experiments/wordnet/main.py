@@ -164,9 +164,9 @@ if __name__ == "__main__":
     parser.add_argument('--decoder', type=str, default="linear", help="('cls', 'linear')")
 
     # Personal model
-    parser.add_argument("--compute_scores", type=str, default="lorentz_inner")
-    parser.add_argument("--value_agg", type=str, default="riemannian")
-    parser.add_argument("--concat_operation", type=str, default="direct")
+    parser.add_argument("--compute_scores", type=str, default="lorentz_inner", help="('lorentz_inner', 'signed_dist')")
+    parser.add_argument("--value_agg", type=str, default="riemannian", help="('riemannian', 'ambient')")
+    parser.add_argument("--concat_operation", type=str, default="direct", help="('direct', 'log-radius')")
     
     # Training args
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
