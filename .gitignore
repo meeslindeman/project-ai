@@ -3,3 +3,4 @@ tutorial/
 data/
 run.job
 output/
+wandb/

@@ -80,6 +80,14 @@ def eval_epoch(model, dataloader: DataLoader, device: torch.device) -> tuple:
     return total_loss / steps, total_acc / steps, total_f1 / steps
 
 def main(args):
+    if args.wandb:
+        import wandb
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            config=vars(args)
+        )
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
     print(f"Using device: {device}")
 
@@ -138,6 +146,17 @@ def main(args):
 
         print(f"Epoch {epoch+1}/{args.epochs}: Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Train F1: {train_f1:.4f} | Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val F1: {val_f1:.4f}")
 
+        if args.wandb:
+            wandb.log({
+                "train/loss": train_loss,
+                "train/acc": train_acc,
+                "train/f1": train_f1,
+                "val/loss": val_loss,
+                "val/acc": val_acc,
+                "val/f1": val_f1,
+                "epoch": epoch + 1,
+            })
+
         # if val_acc > best_val_acc:
         #     best_val_acc = val_acc
         #     torch.save(model.state_dict(), 'best_model.pt')
@@ -146,6 +165,11 @@ def main(args):
         # model.load_state_dict(torch.load('best_model.pt'))
         # test_loss, test_acc = eval_epoch(model, test_loader, device)
         # print(f"Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}")
+
+        # if args.wandb and val_acc > best_val_acc:
+        #     artifact = wandb.Artifact("best-model", type="model")
+        #     artifact.add_file("best_model.pt")
+        #     wandb.log_artifact(artifact)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train WordNet Subtree Classifier')
@@ -172,6 +196,12 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
+
+    # WandB args (if needed)
+    parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
+    parser.add_argument('--wandb-entity', type=str, default="meeslindeman", help="W&B entity (username or team)")
+    parser.add_argument("--wandb-group", type=str, default="wordnet-experiments", help="Group name for run grouping")
+
     
     args = parser.parse_args()
     
