@@ -46,7 +46,6 @@ class Classifier(nn.Module):
             out_features=num_classes,
             k=curvature_k,
             reset_params="kaiming",
-            activation=nn.Identity(),
             input="lorentz"
         )
 

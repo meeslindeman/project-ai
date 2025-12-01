@@ -161,6 +161,7 @@ def main(args):
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    model = model.double()
 
     model.train()
 
@@ -242,4 +243,4 @@ if __name__ == "__main__":
     main(args)
 
 # NOTE: batch size = 1 seems to prevent nans
-# NOTE:
+# NOTE: model.double() seems to prevent nans
