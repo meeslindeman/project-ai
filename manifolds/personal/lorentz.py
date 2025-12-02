@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from typing import Optional
+
 # ======= Temp fixes =========
 _EPS = {
     torch.float32: 1e-7,
@@ -121,3 +123,28 @@ class Lorentz(nn.Module):
         
         # Concatenate time and space to form the Lorentz point
         return torch.cat([time_component, space_components], dim=-1)
+
+    def inner(self, u: torch.Tensor, v: Optional[torch.Tensor] = None, *, keepdim=False, dim=-1) -> torch.Tensor:
+        if v is None:
+            v = u
+
+        d = u.size(dim) - 1
+        uv = u * v
+        if not keepdim:
+            return -uv.narrow(dim, 0, 1).squeeze(dim) + uv.narrow(dim, 1, d).sum(dim=dim, keepdim=False)
+        else:
+            return -uv.narrow(dim, 0, 1) + uv.narrow(dim, 1, d).sum(dim=dim, keepdim=True)
+
+    def mid_point(self, x: torch.Tensor, w: Optional[torch.Tensor] = None, *, keepdim=False, dim=-1) -> torch.Tensor:
+        # Weighted average or simple mean
+        if w is not None:
+            ave = w.matmul(x)
+        else:
+            ave = x.mean(dim=-2)
+
+        # Normalize using Minkowski inner product
+        denom = (-self.inner(ave, ave, keepdim=True, dim=dim)).abs().clamp_min(1e-8).sqrt()
+        k = self.k()
+        if not torch.is_tensor(k):
+            k = ave.new_tensor(k)
+        return torch.sqrt(k) * ave / denom

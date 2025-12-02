@@ -132,7 +132,7 @@ def evaluate(model, device, batch_size, seq_len, vocab_size, steps=50):
     return avg_loss, avg_acc
 
 def main():
-    device = torch.device("cpu")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
 
     vocab_size = 50
     seq_len = 32
