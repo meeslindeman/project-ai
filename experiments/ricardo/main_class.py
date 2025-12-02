@@ -161,7 +161,7 @@ def main():
             k=0.1,
             pad_id=0
         ).to(device)
-        model = model.double()
+        # model = model.double()
 
         optimizer = optim.Adam(model.parameters(), lr=lr)
 

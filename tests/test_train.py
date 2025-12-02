@@ -109,12 +109,12 @@ def parse_args():
                         help="Curvature parameter k (for personal model).")
     parser.add_argument("--seq-len", type=int, default=6, help="Sequence length.")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size.")
-    parser.add_argument("--num-steps", type=int, default=5, help="Number of training steps.")
+    parser.add_argument("--num-steps", type=int, default=200, help="Number of training steps.")
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate.")
 
     # Logging / debugging
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level: DEBUG, INFO, WARNING, ERROR.")
-    parser.add_argument("--log-interval", type=int, default=1, help="How often to log training stats.")
+    parser.add_argument("--log-interval", type=int, default=20, help="How often to log training stats.")
     parser.add_argument("--trace-nans", action="store_true", help="If set, run detailed NaN/Inf + stats checks each step.")
     parser.add_argument("--attn-debug", action="store_true", help="Enable detailed debug logging inside LorentzAttention.")
 
@@ -161,7 +161,6 @@ def main(args):
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    model = model.double()
 
     model.train()
 
