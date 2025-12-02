@@ -2,5 +2,7 @@ __pycache__/
 tutorial/
 data/
 run.job
+run_quick.job
+run_test.job
 output/
 wandb/

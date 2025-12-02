@@ -25,7 +25,7 @@ class Classifier(nn.Module):
 
         #TODO: init poincare and map to Lorentz?
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_id) 
-        # nn.init.normal_(self.embedding.weight, mean=0, std=0.01)
+        nn.init.normal_(self.embedding.weight, mean=0, std=0.01)
         
         self.attention = LorentzAttention(
             input_dim=embed_dim + 1,
@@ -86,6 +86,7 @@ class Classifier(nn.Module):
     def forward(self, token_ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         # euclidean embeddings: [B, N, embed_dim]
         embeds = self.embedding(token_ids)
+        embeds = F.normalize(embeds, p=2, dim=-1) * 0.1
 
         # map embeddings to Lorentz manifold: [B, N, 1 + embed_dim]
         x_lorentz = self.manifold.expmap0(embeds)

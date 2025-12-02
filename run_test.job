@@ -18,4 +18,6 @@ export WANDB_API_KEY=868e3906005e2c816a758fcbc88d5098dabc27be
 
 export PYTHONPATH=$(pwd)
 
-srun python tests/test_train.py
+srun python tests/test_train.py --num-heads 1 
+srun python tests/test_train.py --num-heads 2
+srun python tests/test_train.py --num-heads 4
