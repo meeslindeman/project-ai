@@ -85,6 +85,8 @@ def main(args):
         wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,
+            group=args.wandb_group,
+            name=f"{args.model}-bs={args.batch_size}-heads={args.num_heads}-lr={args.lr}-k={args.curvature}",
             config=vars(args)
         )
 
@@ -110,7 +112,7 @@ def main(args):
             num_heads=args.num_heads
         ).to(device)
     elif args.model == 'hypformer':
-        print(f"Model specifics: {args.att_type} | {args.decoder}")
+        print(f"Model specifics: {args.att_type} | {args.decoder} | {args.extra}")
         from models.hypformer.model import Classifier
         model = Classifier(
             vocab_size=vocab_size,
@@ -123,20 +125,29 @@ def main(args):
         ).to(device)
     elif args.model == 'personal':
         from models.personal.model import Classifier
+        print(f"Model specifics: {args.compute_scores} | {args.concat_operation} | {args.extra}")
         model = Classifier(
             vocab_size=vocab_size,
             pad_id=0,
             embed_dim=args.embed_dim,
             num_classes=num_classes,
+            curvature_k=args.curvature,
             num_heads=args.num_heads,
             compute_scores=args.compute_scores,      
             value_agg=args.value_agg,
             concat_operation=args.concat_operation
         ).to(device)
+        if args.precision:
+            model = model.double()
     else:
         raise ValueError(f"Unknown model: {args.model}")
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    if args.optimizer == "SGD":
+        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+    elif args.optimizer == "Adam":
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    else:
+        raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
     best_val_acc = 0.0
 
@@ -173,7 +184,10 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train WordNet Subtree Classifier')
-    
+
+    # Logging args
+    parser.add_argument('--extra', type=str, default="", help="Optional extra information")
+
     # Data args
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--num_workers', type=int, default=0, help='Number of data loading workers')
@@ -182,6 +196,8 @@ if __name__ == "__main__":
     parser.add_argument('--model', type=str, default="euclidean", help="Which model to train")
     parser.add_argument('--embed_dim', type=int, default=128, help='Embedding dimension')
     parser.add_argument('--num_heads', type=int, default=1, help="Number of attention heads")
+    parser.add_argument('--precision', action='store_true', help="Enable float64")
+    parser.add_argument('--curvature', type=float, default=0.1, help='Lorentz curvature')
 
     # Hypformer
     parser.add_argument('--att_type', type=str, default="full", help="('full', 'focus_attention')")
@@ -196,12 +212,13 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
+    parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "SGD"], help="Optimizer")
 
     # WandB args (if needed)
     parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
-    parser.add_argument('--wandb-entity', type=str, default="meeslindeman", help="W&B entity (username or team)")
-    parser.add_argument("--wandb-group", type=str, default="wordnet-experiments", help="Group name for run grouping")
-
+    parser.add_argument("--wandb_project", type=str, default="hyperbolic-vit")
+    parser.add_argument('--wandb_entity', type=str, default="hyperbolic-vit-team", help="W&B entity (username or team)")
+    parser.add_argument("--wandb_group", type=str, default="wordnet-experiments", help="Group name for run grouping")
     
     args = parser.parse_args()
     
