@@ -21,7 +21,7 @@ class LorentzFC(nn.Module):
                 with torch.no_grad():
                     self.U.data.copy_(0.5 * torch.eye(in_features, out_features))
             else:
-                print("not possible 'eye' initialization, defaulting to kaiming")
+                # print("not possible 'eye' initialization, defaulting to kaiming")
                 with torch.no_grad():
                     self.U.data.copy_(torch.randn(in_features, out_features) * (2 * in_features * out_features) ** -0.5)
             self.a.data.fill_(a_default)

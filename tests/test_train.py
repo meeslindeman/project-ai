@@ -145,13 +145,13 @@ def parse_args():
     parser.add_argument("--optimizer", type=str, default="Adam", help="Optimizer: Adam or SGD.")
     parser.add_argument("--precision", action="store_true", help="Enable float64 for model + loss.")
     parser.add_argument("--p-noise", type=float, default=0.1, help="Probability of sampling tokens from other classes (noise).")
-
+    parser.add_argument("--split-qkv", action="store_true", help="If set, use separate Q, K, V linear layers in LorentzAttention.")
 
     # Logging / debugging
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level: DEBUG, INFO, WARNING, ERROR.")
     parser.add_argument("--log-interval", type=int, default=20, help="How often to log training stats.")
     parser.add_argument("--trace-nans", action="store_true", help="If set, run detailed NaN/Inf + stats checks each step.")
-    parser.add_argument("--attn-debug", action="store_true", help="Enable detailed debug logging inside LorentzAttention.")
+    parser.add_argument("--attn-debug", action="store_true", help="Enable detailed debug logging inside LorentzAttention.") #NOTE: combine with log-level DEBUG
     parser.add_argument("--clip-grad-norm", type=float, default=1.0, help="If > 0, apply gradient norm clipping with this max norm.")
     parser.add_argument("--val-size", type=int, default=512, help="Validation set size for stable metrics.")
 
@@ -181,7 +181,8 @@ def main(args):
             compute_scores="lorentz_inner",     # or "signed_dist"
             value_agg="midpoint",
             concat_operation="direct",      # or "log-radius"
-            attn_debug=args.attn_debug
+            attn_debug=args.attn_debug,
+            split_qkv=args.split_qkv
         ).to(device)
     elif args.model == "hypformer":
         from models.hypformer.model import Classifier

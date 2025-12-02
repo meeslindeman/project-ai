@@ -17,6 +17,7 @@ class Classifier(nn.Module):
             value_agg: str = "riemannian", 
             concat_operation: str = "direct", 
             a_default: float = 0.0,
+            split_qkv: bool = False,
             attn_debug: bool = False
         ) -> None:
         super().__init__()
@@ -36,6 +37,7 @@ class Classifier(nn.Module):
             concat_operation=concat_operation,
             out_dim=embed_dim,   
             a_default=a_default,
+            split_qkv=split_qkv,
             debug=attn_debug,
         )
         self.manifold = self.attention.manifold
