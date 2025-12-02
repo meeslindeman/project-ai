@@ -136,15 +136,36 @@ class Lorentz(nn.Module):
             return -uv.narrow(dim, 0, 1) + uv.narrow(dim, 1, d).sum(dim=dim, keepdim=True)
 
     def mid_point(self, x: torch.Tensor, w: Optional[torch.Tensor] = None, *, keepdim=False, dim=-1) -> torch.Tensor:
-        # Weighted average or simple mean
+        # 1) Minkowski linear combination over token dimension (-2)
         if w is not None:
-            ave = w.matmul(x)
-        else:
-            ave = x.mean(dim=-2)
+            # Ensure weights are normalized over the key dimension
+            # (safe even if they already come from softmax).
+            w_norm = w / (w.sum(dim=-1, keepdim=True).clamp_min(1e-8))
 
-        # Normalize using Minkowski inner product
-        denom = (-self.inner(ave, ave, keepdim=True, dim=dim)).abs().clamp_min(1e-8).sqrt()
+            # w: [..., M, N], x: [..., N, D] -> ave: [..., M, D]
+            ave = w_norm.matmul(x)
+        else:
+            ave = x.mean(dim=-2)  # [..., D]
+
+        # 2) Project back to the hyperboloid <y,y>_L = -1/k
         k = self.k()
-        if not torch.is_tensor(k):
-            k = ave.new_tensor(k)
-        return torch.sqrt(k) * ave / denom
+
+        # Minkowski norm squared s = <ave, ave>
+        s = self.inner(ave, ave, keepdim=True, dim=dim)  # [..., 1]
+
+        # We want alpha^2 * s = -1/k  => alpha^2 = -1/(k*s)
+        # Clamp s away from 0 to avoid blow-ups.
+        s_clamped = torch.clamp(s, max=-1e-8)  # ensure s <= -1e-8
+
+        alpha_sq = -1.0 / (k * s_clamped)      # [..., 1]
+        alpha_sq = alpha_sq.clamp_min(1e-8)
+        alpha = alpha_sq.sqrt()                # [..., 1]
+
+        y = ave * alpha  # [..., D]
+
+        if keepdim:
+            # If you need a token-like dim preserved, you can unsqueeze here.
+            # For current use (attention & pooling), keepdim=False is usually fine.
+            y = y.unsqueeze(-2)
+
+        return y
