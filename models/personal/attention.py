@@ -21,6 +21,7 @@ class LorentzAttention(nn.Module):
             value_agg: str = "riemannian", 
             concat_operation: str = "direct", 
             out_dim: int | None = None,
+            a_default: float = 0.0,
             debug: bool = False
         ) -> None:
         super().__init__()
@@ -43,13 +44,23 @@ class LorentzAttention(nn.Module):
         self.temperature = nn.Parameter(torch.tensor(1.0))
  
         # Q, K, V projections on the manifold
-        self.W_k = nn.ModuleList()
-        self.W_q = nn.ModuleList()
-        self.W_v = nn.ModuleList()
-        for _ in range(self.num_heads):
-            self.W_k.append(LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold))
-            self.W_q.append(LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold))
-            self.W_v.append(LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold))
+        # self.W_k = nn.ModuleList()
+        # self.W_q = nn.ModuleList()
+        # self.W_v = nn.ModuleList()
+        # for _ in range(self.num_heads):
+        #     self.W_k.append(LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold))
+        #     self.W_q.append(LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold))
+        #     self.W_v.append(LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold))
+
+        self.W_q = LorentzFC(self.spatial_dim,
+                            self.num_heads * self.head_spatial_dim,
+                            manifold=self.manifold)
+        self.W_k = LorentzFC(self.spatial_dim,
+                            self.num_heads * self.head_spatial_dim,
+                            manifold=self.manifold)
+        self.W_v = LorentzFC(self.spatial_dim,
+                            self.num_heads * self.head_spatial_dim,
+                            manifold=self.manifold)
 
         in_spatial_out = self.num_heads * self.head_spatial_dim
         if out_dim is None:
@@ -102,6 +113,31 @@ class LorentzAttention(nn.Module):
         k = -self.curvature                     # k > 0 if curvature < 0
         d2 = -2.0 * k - 2.0 * lp
         return d2
+
+    def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: [B, N, 1 + H * d_head]  (Lorentz)
+        return: [B, H, N, 1 + d_head]  (H separate Lorentz points)
+        """
+        B, N, D = x.shape
+        k = self.manifold.k()               # > 0
+        H = self.num_heads
+        d_head = self.head_spatial_dim
+
+        # Drop global time, keep spatial block
+        space = x[..., 1:]                  # [B, N, H * d_head]
+
+        # Split spatial dims into heads
+        space_heads = space.view(B, N, H, d_head)    # [B, N, H, d_head]
+
+        # Compute per-head time coordinate so each head lies on the hyperboloid
+        u_sq = (space_heads ** 2).sum(dim=-1, keepdim=True)    # [B, N, H, 1]
+        t = torch.sqrt(torch.clamp(1.0 / k + u_sq, min=1e-9))  # [B, N, H, 1]
+
+        # Build head-wise Lorentz vectors
+        out = torch.cat([t, space_heads], dim=-1)   # [B, N, H, 1 + d_head]
+        out = out.permute(0, 2, 1, 3).contiguous() # [B, H, N, 1 + d_head]
+        return out
     
     def _concat_heads_direct(self, x: torch.Tensor) -> torch.Tensor:
         B, H, N, D_head = x.shape
@@ -157,15 +193,23 @@ class LorentzAttention(nn.Module):
             )
 
         # Compute Q, K, V for each head
-        q_heads, k_heads, v_heads = [], [], []
-        for h in range(self.num_heads):
-            q_heads.append(self.W_q[h](x))  # [B, N, head_lorentz_dim]
-            k_heads.append(self.W_k[h](x))  # [B, N, head_lorentz_dim]
-            v_heads.append(self.W_v[h](x))  # [B, N, head_lorentz_dim]
+        # q_heads, k_heads, v_heads = [], [], []
+        # for h in range(self.num_heads):
+        #     q_heads.append(self.W_q[h](x))  # [B, N, head_lorentz_dim]
+        #     k_heads.append(self.W_k[h](x))  # [B, N, head_lorentz_dim]
+        #     v_heads.append(self.W_v[h](x))  # [B, N, head_lorentz_dim]
 
-        q = torch.stack(q_heads, dim=1)     # [B, H, N, head_lorentz_dim]
-        k = torch.stack(k_heads, dim=1)
-        v = torch.stack(v_heads, dim=1)
+        # q = torch.stack(q_heads, dim=1)     # [B, H, N, head_lorentz_dim]
+        # k = torch.stack(k_heads, dim=1)
+        # v = torch.stack(v_heads, dim=1)
+
+        q_big = self.W_q(x)   # [B, N, 1 + H * head_spatial_dim]
+        k_big = self.W_k(x)
+        v_big = self.W_v(x)
+
+        q = self._split_heads(q_big)  # [B, H, N, head_lorentz_dim]
+        k = self._split_heads(k_big)
+        v = self._split_heads(v_big)
         
         if self.debug:
             logger.debug(

@@ -4,6 +4,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# ======= Temp fixes =========
+_EPS = {
+    torch.float32: 1e-7,
+    torch.float64: 1e-15,
+}
+
+# from lorentz_math
+def arcosh(x: torch.Tensor) -> torch.Tensor:
+    """Computes the inverse hyperbolic cosine safely."""
+    dtype = x.dtype
+    z = torch.sqrt(torch.clamp_min(x.double().pow(2) - 1.0, _EPS[torch.float64]))
+    return torch.log(x.double() + z).to(dtype)
+# ===========================
+
 class Lorentz(nn.Module):
     """Lorentz model for hyperbolic geometry.
     The Lorentz model is defined as the hyperboloid in Minkowski spacel
@@ -59,11 +73,14 @@ class Lorentz(nn.Module):
         """
         k = self.k()
         sqrt_k = k.sqrt()
+        # update
+        dtype = y.dtype
+        eps = _EPS.get(dtype, 1e-7)
         
         y_time = y[..., :1] # First component (time)
         y_space = y[..., 1:] # Remaining components (space)
 
-        eps = 1e-9
+        # eps = 1e-9
 
         # Calculate the factor based on the formula
         # arccosh(sqrt(k) * y_time) / sqrt((sqrt(k) * y_time)^2 - 1)
@@ -71,7 +88,9 @@ class Lorentz(nn.Module):
         norm_y_space_sq = torch.sum(y_space * y_space, dim=-1, keepdim=True)
         denom_sqrt = torch.sqrt(torch.clamp(k * norm_y_space_sq, min=eps))
 
-        factor = torch.acosh(sqrt_k * y_time) / denom_sqrt
+        acosh_arg = (sqrt_k * y_time).clamp_min(1.0 + eps)
+        factor = arcosh(acosh_arg) / denom_sqrt
+        # factor = torch.acosh(sqrt_k * y_time) / denom_sqrt
 
         return factor * y_space
     

@@ -105,16 +105,16 @@ def parse_args():
     parser.add_argument("--embed-dim", type=int, default=8, help="Embedding dimension.")
     parser.add_argument("--num-classes", type=int, default=2, help="Number of classes.")
     parser.add_argument("--num-heads", type=int, default=1, help="Number of attention heads.")
-    parser.add_argument("--curvature-k", type=float, default=0.1,
-                        help="Curvature parameter k (for personal model).")
+    parser.add_argument("--curvature-k", type=float, default=0.1, help="Curvature parameter k (for personal model).")
     parser.add_argument("--seq-len", type=int, default=6, help="Sequence length.")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size.")
-    parser.add_argument("--num-steps", type=int, default=5, help="Number of training steps.")
+    parser.add_argument("--num-steps", type=int, default=200, help="Number of training steps.")
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate.")
+    parser.add_argument("--optimizer", type=str, default="Adam", help="Optimizer")
 
     # Logging / debugging
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level: DEBUG, INFO, WARNING, ERROR.")
-    parser.add_argument("--log-interval", type=int, default=1, help="How often to log training stats.")
+    parser.add_argument("--log-interval", type=int, default=20, help="How often to log training stats.")
     parser.add_argument("--trace-nans", action="store_true", help="If set, run detailed NaN/Inf + stats checks each step.")
     parser.add_argument("--attn-debug", action="store_true", help="Enable detailed debug logging inside LorentzAttention.")
 
@@ -160,8 +160,12 @@ def main(args):
         raise ValueError(f"Unknown model type: {args.model}")
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    model = model.double()
+    if args.optimizer == "SGD":
+        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+    elif args.optimizer == "Adam":
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    else:
+        raise ValueError("Unknown Optimizer")
 
     model.train()
 

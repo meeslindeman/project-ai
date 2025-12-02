@@ -16,6 +16,7 @@ class Classifier(nn.Module):
             compute_scores: str = "lorentz_inner", 
             value_agg: str = "riemannian", 
             concat_operation: str = "direct", 
+            a_default: float = 0.0,
             attn_debug: bool = False
         ) -> None:
         super().__init__()
@@ -24,7 +25,7 @@ class Classifier(nn.Module):
 
         #TODO: init poincare and map to Lorentz?
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_id) 
-        nn.init.normal_(self.embedding.weight, mean=0, std=0.01)
+        # nn.init.normal_(self.embedding.weight, mean=0, std=0.01)
         
         self.attention = LorentzAttention(
             input_dim=embed_dim + 1,
@@ -34,6 +35,7 @@ class Classifier(nn.Module):
             value_agg=value_agg,
             concat_operation=concat_operation,
             out_dim=embed_dim,   
+            a_default=a_default,
             debug=attn_debug,
         )
         self.manifold = self.attention.manifold
@@ -68,12 +70,12 @@ class Classifier(nn.Module):
             elif xb.size(0) == 1:
                 pooled_b = xb[0:1]            # [1, D]
             else:
-                # Möbius add on hyperboloid
+                # Mobius add on hyperboloid
                 acc = xb[0:1]                 # [1, D]
                 for i in range(1, xb.size(0)):
                     acc = hyp.mobius_add(acc, xb[i:i+1], c)  # [1, D]
 
-                # divide by n via scalar Möbius multiplication
+                # divide by n via scalar Mobius multiplication
                 pooled_b = hyp.mobius_scalarmul(1.0 / xb.size(0), acc, c)  # [1, D]
 
             pooled_list.append(pooled_b)
@@ -84,9 +86,6 @@ class Classifier(nn.Module):
     def forward(self, token_ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         # euclidean embeddings: [B, N, embed_dim]
         embeds = self.embedding(token_ids)
-
-        embeds = torch.clamp(embeds, min=-5.0, max=5.0)
-        embeds = F.normalize(embeds, p=2, dim=-1) * 0.5
 
         # map embeddings to Lorentz manifold: [B, N, 1 + embed_dim]
         x_lorentz = self.manifold.expmap0(embeds)
