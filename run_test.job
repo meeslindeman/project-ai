@@ -18,4 +18,6 @@ source activate hyperbolic
 
 export PYTHONPATH=$(pwd)
 
-srun python tests/test_train.py
+srun python tests/test_train.py --num-heads 1 
+srun python tests/test_train.py --num-heads 2
+srun python tests/test_train.py --num-heads 4

@@ -262,8 +262,8 @@ class LorentzAttention(nn.Module):
             v_tan = self.manifold.logmap0(v)
             out_tan = torch.einsum("bhnm,bhmd->bhnd", attn, v_tan)
             out = self.manifold.expmap0(out_tan)
-        elif self.value_agg == "barycenter":
-            raise NotImplementedError("Barycenter aggregation not implemented yet")
+        elif self.value_agg == "midpoint":
+            out = self.manifold.mid_point(v, attn)
         elif self.value_agg == "lorentz_linear":
             raise NotImplementedError("Lorentz linear aggregation not implemented yet")
         else:

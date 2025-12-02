@@ -19,31 +19,63 @@ def color_yellow(s):
 def color_purple(s):
     return f"{PURPLE}{s}{RESET}"
 
-def make_batch(batch_size, seq_len, vocab_size, pad_id=0, special_token=1, device="cpu"):
-    """
-    Generate a batch of random sequences with padding.
+def make_batch(batch_size, seq_len, vocab_size, pad_id=0, num_classes=4, device="cpu"):
+    assert vocab_size > 1, "vocab_size must be > 1 (0 reserved for pad)."
+    assert num_classes >= 2, "num_classes must be >= 2."
 
-    - token_ids: [B, N] with values in {0..vocab_size-1}, 0 = padding.
-    - mask:      [B, N] bool, True for non-pad tokens.
-    - labels:    [B], 0 or 1:
-        label = 1 if special_token appears at least once in the sequence (excluding pads), else 0.
-    """
     lengths = torch.randint(1, seq_len + 1, (batch_size,), device=device)
 
-    token_ids = torch.full((batch_size, seq_len), pad_id, dtype=torch.long, device=device)
+    token_ids = torch.full(
+        (batch_size, seq_len),
+        pad_id,
+        dtype=torch.long,
+        device=device,
+    )
 
-    for i in range(batch_size):
-        L = lengths[i].item()
-        # sample tokens from [1..vocab_size-1] for non-pad positions
-        token_ids[i, :L] = torch.randint(1, vocab_size, (L,), device=device)
+    non_pad_vocab = vocab_size - 1
+    group_size = max(1, non_pad_vocab // num_classes)
 
-    mask = token_ids != pad_id 
+    labels = torch.zeros(batch_size, dtype=torch.long, device=device)
 
-    # 1 if special_token appears at least once in the true tokens
-    contains_special = (token_ids == special_token) & mask
-    labels = contains_special.any(dim=1).long() 
+    # choose majority cluster for each sequence
+    majority_c = torch.randint(0, num_classes, (batch_size,), device=device)
 
+    all_tokens = torch.arange(1, vocab_size, device=device)
+
+    for b in range(batch_size):
+        L = lengths[b].item()
+        c = majority_c[b].item()
+
+        # tokens belonging to cluster c
+        start = 1 + c * group_size
+        end = min(1 + (c + 1) * group_size, vocab_size)
+        class_tokens = torch.arange(start, end, device=device)
+        if class_tokens.numel() == 0:
+            class_tokens = all_tokens
+
+        # tokens from other clusters for noise
+        other_tokens = all_tokens[(all_tokens < start) | (all_tokens >= end)]
+        if other_tokens.numel() == 0:
+            other_tokens = class_tokens
+
+        p_main = 0.9
+        use_main = torch.rand(L, device=device) < p_main
+
+        main_choices = class_tokens[
+            torch.randint(0, class_tokens.numel(), (L,), device=device)
+        ]
+        noise_choices = other_tokens[
+            torch.randint(0, other_tokens.numel(), (L,), device=device)
+        ]
+
+        tokens = torch.where(use_main, main_choices, noise_choices)
+        token_ids[b, :L] = tokens
+
+        labels[b] = c
+
+    mask = token_ids != pad_id
     return token_ids, mask, labels
+
 
 def check_param_nans(model, logger=None):
     """
@@ -78,7 +110,7 @@ def check_param_nans(model, logger=None):
 
             if grad_nan or grad_inf:
                 log(color_red(
-                    f"[NaN/Inf grad ] {name} | nan={bool(grad_nan)} | inf={bool(grad_inf)}"
+f"[NaN/Inf grad ] {name} | nan={bool(grad_nan)} | inf={bool(grad_inf)}"
                 ))
 
             log(
@@ -100,23 +132,28 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
 
     # Data / model hyperparams
-    parser.add_argument("--vocab-size", type=int, default=50, help="Vocabulary size.")
+    parser.add_argument("--vocab-size", type=int, default=64, help="Vocabulary size (including pad).")
     parser.add_argument("--pad-id", type=int, default=0, help="Padding token id.")
     parser.add_argument("--embed-dim", type=int, default=8, help="Embedding dimension.")
-    parser.add_argument("--num-classes", type=int, default=2, help="Number of classes.")
+    parser.add_argument("--num-classes", type=int, default=4, help="Number of top-level classes (clusters).")
     parser.add_argument("--num-heads", type=int, default=1, help="Number of attention heads.")
     parser.add_argument("--curvature-k", type=float, default=0.1, help="Curvature parameter k (for personal model).")
-    parser.add_argument("--seq-len", type=int, default=6, help="Sequence length.")
+    parser.add_argument("--seq-len", type=int, default=10, help="Sequence length.")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size.")
     parser.add_argument("--num-steps", type=int, default=200, help="Number of training steps.")
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate.")
-    parser.add_argument("--optimizer", type=str, default="Adam", help="Optimizer")
+    parser.add_argument("--optimizer", type=str, default="Adam", help="Optimizer: Adam or SGD.")
+    parser.add_argument("--precision", action="store_true", help="Enable float64 for model + loss.")
+    parser.add_argument("--p-noise", type=float, default=0.1, help="Probability of sampling tokens from other classes (noise).")
+
 
     # Logging / debugging
     parser.add_argument("--log-level", type=str, default="INFO", help="Logging level: DEBUG, INFO, WARNING, ERROR.")
     parser.add_argument("--log-interval", type=int, default=20, help="How often to log training stats.")
     parser.add_argument("--trace-nans", action="store_true", help="If set, run detailed NaN/Inf + stats checks each step.")
     parser.add_argument("--attn-debug", action="store_true", help="Enable detailed debug logging inside LorentzAttention.")
+    parser.add_argument("--clip-grad-norm", type=float, default=1.0, help="If > 0, apply gradient norm clipping with this max norm.")
+    parser.add_argument("--val-size", type=int, default=512, help="Validation set size for stable metrics.")
 
     return parser.parse_args()
 
@@ -142,7 +179,8 @@ def main(args):
             curvature_k=args.curvature_k,
             num_heads=args.num_heads,
             compute_scores="lorentz_inner",     # or "signed_dist"
-            concat_operation="log-radius",      # or "log-radius"
+            value_agg="midpoint",
+            concat_operation="direct",      # or "log-radius"
             attn_debug=args.attn_debug
         ).to(device)
     elif args.model == "hypformer":
@@ -160,6 +198,11 @@ def main(args):
         raise ValueError(f"Unknown model type: {args.model}")
 
     criterion = nn.CrossEntropyLoss()
+
+    if args.precision:
+        model = model.double()
+        criterion = criterion.double()
+
     if args.optimizer == "SGD":
         optimizer = optim.SGD(model.parameters(), lr=args.lr)
     elif args.optimizer == "Adam":
@@ -169,13 +212,29 @@ def main(args):
 
     model.train()
 
+    val_token_ids, val_mask, val_labels = make_batch(
+        batch_size=args.val_size,
+        seq_len=args.seq_len,
+        vocab_size=args.vocab_size,
+        pad_id=args.pad_id,
+        num_classes=args.num_classes,
+        device=device,
+    )
+
+    if args.precision:
+        val_token_ids = val_token_ids.long()  # indices stay long
+        val_mask = val_mask.bool()
+        val_labels = val_labels.long()
+
+    model.train()
+
     for step in range(1, args.num_steps + 1):
         token_ids, mask, labels = make_batch(
             batch_size=args.batch_size,
             seq_len=args.seq_len,
             vocab_size=args.vocab_size,
             pad_id=args.pad_id,
-            special_token=1,
+            num_classes=args.num_classes,
             device=device,
         )
 
@@ -193,7 +252,6 @@ def main(args):
             )
             if args.trace_nans:
                 check_param_nans(model, logger)
-            # Early break to inspect state
             break
 
         loss = criterion(logits, labels)
@@ -206,28 +264,44 @@ def main(args):
             )
             if args.trace_nans:
                 check_param_nans(model, logger)
-            # Early break to inspect state
             break
 
         optimizer.zero_grad()
         loss.backward()
 
+        # Optional gradient clipping
+        if args.clip_grad_norm and args.clip_grad_norm > 0:
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.clip_grad_norm)
+
         if args.trace_nans:
-            # Check params/gradients every step if tracing is enabled
             check_param_nans(model, logger)
 
         optimizer.step()
 
         with torch.no_grad():
             preds = logits.argmax(dim=-1)
-            acc = (preds == labels).float().mean().item()
+            train_acc = (preds == labels).float().mean().item()
 
         if step % args.log_interval == 0 or step == 1:
             logger.info(color_purple(
-                f"Step {step:03d} | Loss: {loss.item():.6f} | "
-                f"Acc: {acc * 100:.1f}% | loss_is_nan={torch.isnan(loss).item()}"
+                f"Step {step:03d} | Train Loss: {loss.item():.6f} | "
+                f"Train Acc: {train_acc * 100:.1f}% | loss_is_nan={torch.isnan(loss).item()}"
             ))
 
+            # Validation metrics on fixed dataset
+            model.eval()
+            with torch.no_grad():
+                val_logits = model(val_token_ids, val_mask)
+                val_loss = criterion(val_logits, val_labels)
+                val_preds = val_logits.argmax(dim=-1)
+                val_acc = (val_preds == val_labels).float().mean().item()
+            model.train()
+
+            logger.info(
+                f"Val Loss: {val_loss.item():.6f} | Acc: {val_acc * 100:.1f}%"
+            )
+
+    # Final evaluation on a fresh batch (optional)
     model.eval()
     with torch.no_grad():
         token_ids, mask, labels = make_batch(
@@ -235,16 +309,14 @@ def main(args):
             seq_len=args.seq_len,
             vocab_size=args.vocab_size,
             pad_id=args.pad_id,
-            special_token=1,
+            num_classes=args.num_classes,
             device=device,
         )
         logits = model(token_ids, mask)
         preds = logits.argmax(dim=-1)
         acc = (preds == labels).float().mean().item()
+        logging.info(f"Final fresh-batch acc: {acc * 100:.1f}%")
 
 if __name__ == "__main__":
     args = parse_args()
     main(args)
-
-# NOTE: batch size = 1 seems to prevent nans
-# NOTE: model.double() seems to prevent nans

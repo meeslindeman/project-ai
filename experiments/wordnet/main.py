@@ -200,7 +200,7 @@ if __name__ == "__main__":
     parser.add_argument('--curvature', type=float, default=0.1, help='Lorentz curvature')
 
     # Hypformer
-    parser.add_argument('--att_type', type=str, default="full", help="('full', 'focus_attention')")
+    parser.add_argument('--att_type', type=str, default="full", help="('full', 'linear_focused')")
     parser.add_argument('--decoder', type=str, default="linear", help="('cls', 'linear')")
 
     # Personal model
