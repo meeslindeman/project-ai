@@ -6,11 +6,9 @@ import torch.nn.functional as F
 from torch.special import digamma
 
 from manifolds.personal import Lorentz, LorentzFC
-from models.personal.layers import EuclidLinear
 
 logger = logging.getLogger(__name__)
 
-#NOTE: look at how we difine Q,K,V: split into heads instead of separate linear layers
 class LorentzAttention(nn.Module):
     def __init__(
             self, 
@@ -259,8 +257,6 @@ class LorentzAttention(nn.Module):
             out = self.manifold.expmap0(out_tan)
         elif self.value_agg == "midpoint":
             out = self.manifold.mid_point(v, attn)
-        elif self.value_agg == "lorentz_linear":
-            raise NotImplementedError("Lorentz linear aggregation not implemented yet")
         else:
             raise ValueError(f"Unknown value_agg mode: {self.value_agg}")
         

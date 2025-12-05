@@ -1,0 +1,31 @@
+entity: hyperbolic-vit-team
+project: experiments-wordnet   # or whatever project you want
+
+program: experiments/wordnet/main.py
+method: grid
+
+parameters:
+  epochs:
+    value: 5
+  model:
+    value: personal
+  # compute_scores:
+  #   values: ["lorentz_inner", "signed_dist"]
+  concat_operation:
+    values: ["direct", "log-radius"]
+  split_qkv:
+    values: [false, true]     # boolean
+  num_heads:
+    values: [1, 2, 4]
+  lr:
+    values: [0.001, 0.0007, 0.0005, 0.0003]
+  curvature_k:
+    value: [0.001, 0.01, 0.1, 1.0]
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_boolean_flags}
+  - --wandb
+  - --precision

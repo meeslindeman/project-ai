@@ -39,6 +39,10 @@ def train_epoch(model, dataloader: DataLoader, optimizer: optim.Optimizer, devic
         logits = model(token_ids, mask)
         loss = loss_fn(logits, labels)
 
+        if not torch.isfinite(loss):
+            print("Non-finite training loss (NaN or Inf) detected, aborting epoch.")
+            return float('nan'), 0.0, 0.0
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -69,6 +73,11 @@ def eval_epoch(model, dataloader: DataLoader, device: torch.device) -> tuple:
 
         logits = model(token_ids, mask)
         loss = loss_fn(logits, labels)
+
+        if not torch.isfinite(loss):
+            print("Non-finite validation loss (NaN or Inf) detected, aborting epoch.")
+            return float('nan'), 0.0, 0.0
+
         acc = accuracy_fn(logits, labels)
         f1 = f1_fn(logits, labels)
         
@@ -155,6 +164,27 @@ def main(args):
         train_loss, train_acc, train_f1 = train_epoch(model, train_loader, optimizer, device)
         val_loss, val_acc, val_f1 = eval_epoch(model, val_loader, device)
 
+        if not np.isfinite(train_loss) or not np.isfinite(val_loss):
+            msg = f"Non-finite loss detected at epoch {epoch+1} (train_loss={train_loss}, val_loss={val_loss}). Aborting this run early."
+            print(msg)
+
+            if args.wandb:
+                wandb.log({
+                    "train/loss": train_loss,
+                    "val/loss": val_loss,
+                    "epoch": epoch + 1,
+                    "status": "non_finite_loss"
+                })
+                # try:
+                #     wandb.alert(
+                #         title="Non-finite loss detected",
+                #         text=msg,
+                #     )
+                # except Exception:
+                #     pass
+                wandb.finish()
+            return
+
         print(f"Epoch {epoch+1}/{args.epochs}: Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}, Train F1: {train_f1:.4f} | Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val F1: {val_f1:.4f}")
 
         if args.wandb:
@@ -205,9 +235,10 @@ if __name__ == "__main__":
 
     # Personal model
     parser.add_argument("--compute_scores", type=str, default="lorentz_inner", help="('lorentz_inner', 'signed_dist')")
-    parser.add_argument("--value_agg", type=str, default="riemannian", help="('riemannian', 'ambient')")
+    parser.add_argument("--value_agg", type=str, default="midpoint", help="('riemannian', 'midpoint')")
     parser.add_argument("--concat_operation", type=str, default="direct", help="('direct', 'log-radius')")
-    
+    parser.add_argument("--split_qkv", action="store_true", help="If set, use separate Q, K, V linear layers in LorentzAttention.")
+
     # Training args
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
