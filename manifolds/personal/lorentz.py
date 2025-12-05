@@ -6,101 +6,116 @@ import torch.nn.functional as F
 
 from typing import Optional
 
-# ======= Temp fixes =========
-_EPS = {
-    torch.float32: 1e-7,
-    torch.float64: 1e-15,
-}
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-# from lorentz_math
-def arcosh(x: torch.Tensor) -> torch.Tensor:
-    """Computes the inverse hyperbolic cosine safely."""
-    dtype = x.dtype
-    z = torch.sqrt(torch.clamp_min(x.double().pow(2) - 1.0, _EPS[torch.float64]))
-    return torch.log(x.double() + z).to(dtype)
-# ===========================
 
 class Lorentz(nn.Module):
     """Lorentz model for hyperbolic geometry.
-    The Lorentz model is defined as the hyperboloid in Minkowski spacel
+    The Lorentz model is defined as the hyperboloid in Minkowski space.
     The manifold is defined by the equation:
-        -x+0^2 + x_1^2 + ... + x_n^2 = -1/k"""
-    def __init__(self, k: float = 0.1, requires_grad: bool = False, contraining_strategy: nn.Module = nn.Identity()) -> None:
+        -x_0^2 + x_1^2 + ... + x_n^2 = -1/k"""
+
+    def __init__(
+        self,
+        k: float = 0.1,
+        requires_grad: bool = False,
+        constraining_strategy: nn.Module = nn.Identity(),
+        max_norm: Optional[float] = None,
+        safe: bool = True,
+        exp_max_norm: float = 1.5,
+        eps: float = 1e-8
+    ):
         super().__init__()
         k_value = torch.log(torch.exp(torch.tensor(k)) - 1)
         self.c_softplus_inv = nn.Parameter(k_value, requires_grad=requires_grad)
-        self.constraining_strategy = contraining_strategy
-    
+        self.constraining_strategy = constraining_strategy
+        self.max_norm = max_norm
+
+        self.safe = safe
+        self.exp_max_norm = exp_max_norm
+        self.eps = eps
+
     def k(self):
         """Returns the negative curvature of the Lorentz model."""
         return F.softplus(self.c_softplus_inv)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+
+    def forward(self, x):
         return self.expmap0(x)
 
-    def normL(self, x: torch.Tensor, metric: bool = None) -> torch.Tensor:
+    def normL(self, x, metric=None):
         if metric is None:
             metric = torch.ones(x.size(-1), device=x.device, dtype=x.dtype)
         metric[0] = -1
+
         return (x * x * metric).sum(dim=-1, keepdim=True).sqrt()
-    
-    def expmap0(self, x: torch.Tensor) -> torch.Tensor:
+
+    def expmap0(self, x):
         """
         Maps tangent vectors from the origin of the tangent space T_0 H^n_k
-        to the Lorentz hyperboloid H^n_K.
+        to the Lorentz hyperboloid H^n_k.
         Handles the case where the input vector norm is zero.
         """
-        sqrt_k = self.k().sqrt()
+        sqrt_k = self.k() ** 0.5
         norm_x = torch.norm(x, dim=-1, keepdim=True)
 
         eps = 1e-9
         is_zero = norm_x < eps
 
-        sqrt_k_norm_x = sqrt_k * norm_x
+        sqrt_k_norm_x = norm_x * sqrt_k
         time = 1.0 / sqrt_k * torch.cosh(sqrt_k_norm_x)
 
         factor = torch.where(
-            is_zero,
-            torch.ones_like(norm_x),
-            torch.sinh(sqrt_k_norm_x) / (sqrt_k_norm_x)
+            is_zero, torch.ones_like(norm_x), torch.sinh(sqrt_k_norm_x) / sqrt_k_norm_x
         )
-
         space = factor * x
         return torch.cat([time, space], dim=-1)
-    
-    def logmap0(self, y: torch.Tensor) -> torch.Tensor:
+
+    def logmap0(self, y):
         """
-        Maps points from the Lorentz hyperboloid H^n_k
-        back to the tangent space T_0 H^n_k at the origin.
+        Logarithmic map from the origin for the Lorentz model.
+
+        Args:
+            y: Point on the hyperboloid
+
+        Returns:
+            Tangent vector at the origin that maps to y under expmap0
         """
         k = self.k()
-        sqrt_k = k.sqrt()
-        # update
-        dtype = y.dtype
-        eps = _EPS.get(dtype, 1e-7)
-        
-        y_time = y[..., :1] # First component (time)
-        y_space = y[..., 1:] # Remaining components (space)
+        sqrt_k = k**0.5
 
-        # eps = 1e-9
+        y_time = y[..., :1]  # First component (time)
+        y_space = y[..., 1:]  # Remaining components (space)
+
+        # A small epsilon to avoid instability when y is close to the origin.
+        eps = 1e-9
 
         # Calculate the factor based on the formula
         # arccosh(sqrt(k) * y_time) / sqrt((sqrt(k) * y_time)^2 - 1)
         # The argument to sqrt can be negative due to floating point errors, so clamp at 0.
         norm_y_space_sq = torch.sum(y_space * y_space, dim=-1, keepdim=True)
-        denom_sqrt = torch.sqrt(torch.clamp(k * norm_y_space_sq, min=eps))
+        denominator_sqrt = torch.sqrt(torch.clamp(k * norm_y_space_sq, min=eps))
 
-        acosh_arg = (sqrt_k * y_time).clamp_min(1.0 + eps)
-        factor = arcosh(acosh_arg) / denom_sqrt
-        # factor = torch.acosh(sqrt_k * y_time) / denom_sqrt
+        factor = torch.acosh(sqrt_k * y_time) / denominator_sqrt
 
+        # Compute the tangent vector (0, y_space) scaled by the factor
         return factor * y_space
-    
-    def projection_space_orthogonal(self, x: torch.Tensor) -> torch.Tensor:
-        """Projects a point onto the Lorentz model orthogonally from the space dimensions."""
-        return torch.cat([torch.sqrt(1/self.k() + x.pow(2).sum(dim=-1, keepdim=True)), x], dim=-1)
-    
-    def poincare_to_lorentz(self, x: torch.Tensor, x_poincare: torch.Tensor) -> torch.Tensor:
+
+    def projection_space_orthogonal(self, x):
+        """
+        Projects a point onto the Lorentz model orthogonally from the space dimensions.
+
+        Args:
+            x: Point in the Lorentz model dim [batch_size, dim]
+        Returns:
+            Projected point dim [batch_size, dim]
+        """
+        return torch.cat(
+            [torch.sqrt(1 / self.k() + x.pow(2).sum(-1, keepdim=True)), x], dim=-1
+        )
+
+    def poincare_to_lorentz(self, x_poincare: torch.Tensor):
         """
         Converts points from the Poincaré ball model to the Lorentz hyperboloid model.
         The conversion assumes both models share the same curvature parameter k > 0.
@@ -110,62 +125,84 @@ class Lorentz(nn.Module):
 
         # Calculate the squared Euclidean norm of the Poincaré points
         x_norm_sq = torch.sum(x_poincare * x_poincare, dim=-1, keepdim=True)
-        
+
         # Denominator for the conversion formula
         # Add epsilon for numerical stability
         denom = 1 - k * x_norm_sq + 1e-9
-        
+
         # Time component of the Lorentz point
         time_component = (1 / sqrt_k) * (1 + k * x_norm_sq) / denom
-        
+
         # Space components of the Lorentz point
         space_components = (2 * x_poincare) / denom
-        
+
         # Concatenate time and space to form the Lorentz point
         return torch.cat([time_component, space_components], dim=-1)
+    
+    def direct_concat(self, xs: torch.Tensor):
+        """
+        Perform Lorentz direct concatenation as described by Qu, E., et al. (https://openreview.net/forum?id=NQi9U0YLW3)
 
-    def inner(self, u: torch.Tensor, v: Optional[torch.Tensor] = None, *, keepdim=False, dim=-1) -> torch.Tensor:
+        Args:
+            xs: list of tensors to concatenate. Assumes the last dimension is the dimension along which the tensor lies on the manifold, and the second last dimension is the dimension to concatenate over.
+        """
+        # Input check
+        time_sq = xs.narrow(dim=-1, start=0, length=1) ** 2
+        space_sq = xs.narrow(dim=-1, start=1, length=xs.size(-1)-1) ** 2
+        lorentz_norm_sq = -time_sq + space_sq.sum(dim=-1, keepdim=True)
+        target_norm = -1.0 / self.k()
+        assert torch.allclose(lorentz_norm_sq, target_norm, atol=1e-3), f"Input tensors do not lie on the Lorentz manifold. Mean deviation: {torch.abs(lorentz_norm_sq - target_norm).mean().item()}"
+
+        time = torch.sqrt(((xs[..., 0]) ** 2).sum(dim=-1, keepdim=True) - (xs.shape[-2] - 1) / self.k())
+        space = xs[..., 1:].reshape(*xs.shape[:-2], -1)
+        out = torch.cat([time, space], dim=-1)
+        assert torch.allclose(-out[..., 0]**2 + (out[..., 1:]**2).sum(dim=-1), -1.0 / self.k(), atol=1e-3), "Output tensor does not lie on the Lorentz manifold."
+        return out
+
+    # ========================================
+    def inner(self, u: torch.Tensor, v: Optional[torch.Tensor] = None, keepdim: bool = False, dim: int = -1) -> torch.Tensor:
         if v is None:
             v = u
 
         d = u.size(dim) - 1
         uv = u * v
+
+        time = uv.narrow(dim, 0, 1)                     # [..., 1]
+        space = uv.narrow(dim, 1, d).sum(dim=dim, keepdim=True)  # [..., 1]
+
+        res = -time + space                             # [..., 1]
         if not keepdim:
-            return -uv.narrow(dim, 0, 1).squeeze(dim) + uv.narrow(dim, 1, d).sum(dim=dim, keepdim=False)
-        else:
-            return -uv.narrow(dim, 0, 1) + uv.narrow(dim, 1, d).sum(dim=dim, keepdim=True)
+            res = res.squeeze(dim)
+        return res
 
-    def mid_point(self, x: torch.Tensor, w: Optional[torch.Tensor] = None, *, keepdim=False, dim=-1) -> torch.Tensor:
-        # 1) Minkowski linear combination over token dimension (-2)
+    def mid_point(self, x: torch.Tensor, w: Optional[torch.Tensor] = None, dim: int = -1) -> torch.Tensor:
+        # from https://github.com/chenweize1998/fully-hyperbolic-nn/
         if w is not None:
-            # Ensure weights are normalized over the key dimension
-            # (safe even if they already come from softmax).
-            w_norm = w / (w.sum(dim=-1, keepdim=True).clamp_min(1e-8))
-
-            # w: [..., M, N], x: [..., N, D] -> ave: [..., M, D]
-            ave = w_norm.matmul(x)
+            # weighted average over token dimension (-2)
+            ave = w.matmul(x)       # [..., M, D]
         else:
-            ave = x.mean(dim=-2)  # [..., D]
+            # unweighted mean over token dimension
+            ave = x.mean(dim=-2)    # [..., D]
 
-        # 2) Project back to the hyperboloid <y,y>_L = -1/k
-        k = self.k()
+        norm_sq = self.inner(ave, ave, keepdim=True, dim=dim)  # [..., 1]
+        norm_sq.clamp(max=-1e-8)
 
-        # Minkowski norm squared s = <ave, ave>
-        s = self.inner(ave, ave, keepdim=True, dim=dim)  # [..., 1]
-
-        # We want alpha^2 * s = -1/k  => alpha^2 = -1/(k*s)
-        # Clamp s away from 0 to avoid blow-ups.
-        s_clamped = torch.clamp(s, max=-1e-8)  # ensure s <= -1e-8
-
-        alpha_sq = -1.0 / (k * s_clamped)      # [..., 1]
+        alpha_sq = -1.0 / (self.k() * norm_sq)    # [..., 1]
         alpha_sq = alpha_sq.clamp_min(1e-8)
-        alpha = alpha_sq.sqrt()                # [..., 1]
+        alpha = torch.sqrt(alpha_sq)    # [..., 1]
 
-        y = ave * alpha  # [..., D]
+        midpoint = alpha * ave   # [..., D] / [..., M, D]
+        return midpoint
 
-        if keepdim:
-            # If you need a token-like dim preserved, you can unsqueeze here.
-            # For current use (attention & pooling), keepdim=False is usually fine.
-            y = y.unsqueeze(-2)
+    def pooling(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if mask is None:
+            # Uniform centroid over tokens
+            pooled = self.mid_point(x)            # [B, D]
+        else:
+            # Convert mask to uniform weights over valid tokens
+            w = mask.float()                      # [B, N]
+            w = w.unsqueeze(-2)                   # [B, 1, N]
+            pooled = self.mid_point(x, w)         # [B, 1, D]
+            pooled = pooled.squeeze(-2)           # [B, D]
 
-        return y
+        return pooled

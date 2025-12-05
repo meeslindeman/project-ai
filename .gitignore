@@ -6,3 +6,4 @@ run_quick.job
 run_test.job
 output/
 wandb/
+external/
