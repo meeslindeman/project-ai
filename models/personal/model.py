@@ -40,6 +40,20 @@ class Classifier(nn.Module):
             split_qkv=split_qkv,
             debug=attn_debug,
         )
+
+        self.attention2 = LorentzAttention(
+            input_dim=embed_dim + 1,
+            curvature=curvature_k,
+            num_heads=num_heads,
+            compute_scores=compute_scores,
+            value_agg=value_agg,
+            concat_operation=concat_operation,
+            out_dim=embed_dim,   
+            a_default=a_default,
+            split_qkv=split_qkv,
+            debug=attn_debug
+        )
+
         self.manifold = Lorentz(curvature_k)
 
         self.fc = LorentzMLR(
@@ -60,6 +74,8 @@ class Classifier(nn.Module):
 
         # hyperbolic attention on the manifold: [B, N, 1 + embed_dim] (after heads + W_o)
         attn_output = self.attention(x_lorentz, mask=mask)
+
+        attn_output = self.attention2(attn_output, mask=mask)
 
         # hyperbolic mean pooling over tokens: [B, 1 + embed_dim]
         pooled = self.manifold.pooling(attn_output, mask)   #TODO: frechet mean

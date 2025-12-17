@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 import random
 import numpy as np
 import argparse
+from hypll.optim import RiemannianAdam
 
 from experiments.wordnet.dataloader import get_dataloader
 from experiments.wordnet.metrics import loss_fn, accuracy_fn, f1_fn
@@ -155,6 +156,8 @@ def main(args):
         optimizer = optim.SGD(model.parameters(), lr=args.lr)
     elif args.optimizer == "Adam":
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    elif args.optimizer == "RiemannianAdam":
+        optimizer = RiemannianAdam(model.parameters(), lr=args.lr)
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
@@ -243,7 +246,7 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
-    parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "SGD"], help="Optimizer")
+    parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "SGD", "RiemannianAdam"], help="Optimizer")
 
     # WandB args (if needed)
     parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')

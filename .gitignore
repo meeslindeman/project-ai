@@ -7,3 +7,5 @@ run_test.job
 output/
 wandb/
 external/
+results/
+benchmark/
