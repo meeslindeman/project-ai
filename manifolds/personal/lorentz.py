@@ -206,3 +206,5 @@ class Lorentz(nn.Module):
             pooled = pooled.squeeze(-2)           # [B, D]
 
         return pooled
+
+    # def residual
