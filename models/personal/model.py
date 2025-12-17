@@ -1,86 +1,79 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from manifolds.personal import LorentzMLR, Lorentz
+
+from models.personal.layer import LorentzMLR
+from models.personal.lorentz import Lorentz
 from models.personal.attention import LorentzAttention
 
-class Classifier(nn.Module):
+class Classifer(nn.Module):
     def __init__(
-            self, 
-            vocab_size: int, 
-            pad_id: int, 
-            embed_dim: int, 
-            num_classes: int, 
-            curvature_k: float = 0.1, 
-            num_heads: int = 1, 
-            compute_scores: str = "lorentz_inner", 
-            value_agg: str = "midpoint", 
-            concat_operation: str = "direct", 
-            a_default: float = 0.0,
-            split_qkv: bool = False,
-            attn_debug: bool = False
-        ) -> None:
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        num_classes: int,
+        curvature_k: float = 0.1,
+        num_heads: int = 1,
+        compute_scores: str = "lorentz_inner",
+        value_agg: str = "midpoint",
+        concat_operation: str = "direct",
+        a_default: float = 0.0,
+        split_qkv: bool = False,
+        attn_debug: bool = False,
+        num_layers: int = 2,
+        attn_mask: torch.Tensor = None
+    ) -> None:
         super().__init__()
-        self.embed_dim = embed_dim
+
+        self.hidden_dim = hidden_dim
         self.curvature_k = curvature_k
+        self.num_layers = num_layers
+        self.attn_mask = attn_mask
 
-        #TODO: init poincare and map to Lorentz?
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_id) 
-        nn.init.normal_(self.embedding.weight, mean=0, std=0.01)
-        
-        self.attention = LorentzAttention(
-            input_dim=embed_dim + 1,
-            curvature=curvature_k,
-            num_heads=num_heads,
-            compute_scores=compute_scores,
-            value_agg=value_agg,
-            concat_operation=concat_operation,
-            out_dim=embed_dim,   
-            a_default=a_default,
-            split_qkv=split_qkv,
-            debug=attn_debug,
-        )
-
-        self.attention2 = LorentzAttention(
-            input_dim=embed_dim + 1,
-            curvature=curvature_k,
-            num_heads=num_heads,
-            compute_scores=compute_scores,
-            value_agg=value_agg,
-            concat_operation=concat_operation,
-            out_dim=embed_dim,   
-            a_default=a_default,
-            split_qkv=split_qkv,
-            debug=attn_debug
-        )
+        self.lin_in = nn.Linear(in_dim, hidden_dim)
 
         self.manifold = Lorentz(curvature_k)
 
+        self.attn_layers = nn.ModuleList(
+            [
+                LorentzAttention(
+                    input_dim=hidden_dim + 1,
+                    curvature=curvature_k,
+                    num_heads=num_heads,
+                    compute_scores=compute_scores,
+                    value_agg=value_agg,
+                    concat_operation=concat_operation,
+                    out_dim=hidden_dim,
+                    a_default=a_default,
+                    split_qkv=split_qkv,
+                    debug=attn_debug,
+                    attn_mask=attn_mask
+                )
+                for _ in range(num_layers)
+            ]
+        )
+
         self.fc = LorentzMLR(
-            in_features=embed_dim,
+            in_features=hidden_dim,
             out_features=num_classes,
             k=curvature_k,
             reset_params="kaiming",
-            input="lorentz"
+            input="lorentz",
         )
 
-    def forward(self, token_ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        # euclidean embeddings: [B, N, embed_dim]
-        embeds = self.embedding(token_ids)
-        embeds = F.normalize(embeds, p=2, dim=-1) * 0.1
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor = None) -> torch.Tensor:
+        x = self.lin_in(x)  # [N, D]
 
-        # map embeddings to Lorentz manifold: [B, N, 1 + embed_dim]
-        x_lorentz = self.manifold.expmap0(embeds)
+        x = x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        x = x * 1.0
 
-        # hyperbolic attention on the manifold: [B, N, 1 + embed_dim] (after heads + W_o)
-        attn_output = self.attention(x_lorentz, mask=mask)
+        x = self.manifold.safe_expmap0(x).unsqueeze(0)  # [1, N, 1+D]
 
-        attn_output = self.attention2(attn_output, mask=mask)
+        for attn in self.attn_layers:
+            x_in = x
+            x = attn(x, attn_mask=self.attn_mask)
+            x = 0.5 * x + 0.5 * x_in
+            x = self.manifold.proj(x)
 
-        # hyperbolic mean pooling over tokens: [B, 1 + embed_dim]
-        pooled = self.manifold.pooling(attn_output, mask)   #TODO: frechet mean
-
-        # Lorentz MLR classifier; expects Lorentz input: [B, num_classes]
-        logits = self.fc(pooled)   
-
-        return logits
+        x = x.squeeze(0)         # [N, 1+D]
+        return self.fc(x)        # [N, C]

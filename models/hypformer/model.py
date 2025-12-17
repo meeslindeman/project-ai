@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from manifolds.hypformer import Lorentz
-from .attention import HypformerAttention
-from .decoder import HyperbolicCLS, HyperbolicLinear
+from models.hypformer.attention import HypformerAttention
+from models.hypformer.decoder import HyperbolicCLS, HyperbolicLinear
 
 class Classifier(nn.Module):
     def __init__(self, vocab_size: int, pad_id: int, embed_dim: int, num_classes: int, att_type: str = 'full', decoder_type: str = 'linear', num_heads: int = 1) -> None:

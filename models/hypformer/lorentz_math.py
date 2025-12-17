@@ -1,5 +1,5 @@
 import torch
-from manifolds.hypformer.utils import sqrt, clamp
+from models.hypformer.utils import sqrt, clamp
 _EPS = {torch.float32: 1e-7, torch.float64: 1e-15}
 
 EXP_MAX_NORM = 10.

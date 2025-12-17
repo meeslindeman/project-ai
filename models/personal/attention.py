@@ -5,7 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.special import digamma
 
-from manifolds.personal import Lorentz, LorentzFC
+from models.personal.lorentz import Lorentz
+from models.personal.layer import LorentzFC
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,8 @@ class LorentzAttention(nn.Module):
             out_dim: int | None = None,
             a_default: float = 0.0,
             split_qkv: bool = False,
-            debug: bool = False
+            debug: bool = False,
+            attn_mask: torch.Tensor = None
         ) -> None:
         super().__init__()
         self.lorentz_dim = input_dim
@@ -173,7 +175,7 @@ class LorentzAttention(nn.Module):
         out = torch.cat([t_prime, space_cat], dim=-1)      # [B, N, 1 + H * d_head]
         return out
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None, attn_mask: torch.Tensor | None = None) -> torch.Tensor:
         B, N, D = x.shape
         assert D == self.lorentz_dim, f"Expected last dim {self.lorentz_dim}, got {D}"
 
@@ -237,9 +239,9 @@ class LorentzAttention(nn.Module):
                 scores.max().item(),
             )
 
-        if mask is not None:
-            mask_exp = mask[:, None, None, :].to(dtype=torch.bool)  # [B, 1, 1, N]
-            scores = scores.masked_fill(~mask_exp, float("-inf"))
+        if attn_mask is not None:
+            m = attn_mask[None, None, :, :]   # [B,1,N,N]
+            scores = scores.masked_fill(~m, float("-inf"))
 
         attn = F.softmax(scores, dim=-1)    # [B, H, N, N] 
 

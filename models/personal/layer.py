@@ -2,7 +2,7 @@ import os
 import sys
 import torch
 import torch.nn as nn
-from .lorentz import Lorentz
+from models.personal.lorentz import Lorentz
 
 _here = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.join(

@@ -72,6 +72,22 @@ class Lorentz(nn.Module):
         space = factor * x
         return torch.cat([time, space], dim=-1)
 
+    def safe_expmap0(self, x):
+        sqrt_k = self.k().sqrt()                      # k > 0
+        norm_x = torch.norm(x, dim=-1, keepdim=True).clamp_min(1e-9)
+
+        z = norm_x * sqrt_k
+
+        # prevent cosh/sinh overflow (float32 starts to overflow around ~88)
+        z = z.clamp_max(80.0)
+
+        time = torch.cosh(z) / sqrt_k
+        factor = torch.sinh(z) / (z + 1e-9)           # safe even when z ~ 0
+        space = factor * x
+
+        return torch.cat([time, space], dim=-1)
+
+
     def logmap0(self, y):
         """
         Logarithmic map from the origin for the Lorentz model.
@@ -185,7 +201,7 @@ class Lorentz(nn.Module):
             ave = x.mean(dim=-2)    # [..., D]
 
         norm_sq = self.inner(ave, ave, keepdim=True, dim=dim)  # [..., 1]
-        norm_sq.clamp(max=-1e-8)
+        norm_sq = norm_sq.clamp(max=-1e-8)
 
         alpha_sq = -1.0 / (self.k() * norm_sq)    # [..., 1]
         alpha_sq = alpha_sq.clamp_min(1e-8)
@@ -207,4 +223,9 @@ class Lorentz(nn.Module):
 
         return pooled
 
-    # def residual
+    def proj(self, x: torch.Tensor) -> torch.Tensor:
+        # enforce <x,x>_L = -1/k
+        k = self.k()
+        xx = self.inner(x, x, keepdim=True)                  # [..., 1]
+        scale = (k * (-xx).clamp_min(self.eps)).sqrt()       # [..., 1]
+        return x / scale

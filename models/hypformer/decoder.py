@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from manifolds.hypformer.layer import HypCLS, HypLinear
+from models.hypformer.layer import HypCLS, HypLinear
 
 class HyperbolicCLS(nn.Module):
     """Fully hyperbolic classifier head using HypCLS prototypes."""

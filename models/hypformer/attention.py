@@ -2,8 +2,8 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from manifolds.hypformer import Lorentz
-from manifolds.hypformer import HypLinear
+from models.hypformer.lorentz import Lorentz
+from models.hypformer.layer import HypLinear
 
 class HypformerAttention(nn.Module):
     def __init__(self, manifold: Lorentz, input_dim: int, att_type: str = "full", num_heads: int = 1, use_weight: bool = True, heads_concat: bool = False) -> None:
