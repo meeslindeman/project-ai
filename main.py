@@ -61,30 +61,58 @@ def train_one_split(args):
     in_dim = dataset.graph["node_feat"].shape[1]
     num_classes = int(dataset.label.max().item() + 1)
 
-    if args.model != "personal":
-        raise ValueError("Stage 1 only: --model personal")
+    attn_mask = None
+    if args.attn_scope == "adjs":
+        N = dataset.graph["num_nodes"]
+        edge_index = dataset.graph["edge_index"]
+        attn_mask = torch.zeros(N, N, dtype=torch.bool, device=device)
+        attn_mask[edge_index[0], edge_index[1]] = True
+        attn_mask.fill_diagonal_(True)
 
-    N = dataset.graph["num_nodes"]
-    edge_index = dataset.graph["edge_index"]
-    attn_mask = torch.zeros(N, N, dtype=torch.bool, device=device)
-    attn_mask[edge_index[0], edge_index[1]] = True
-    attn_mask.fill_diagonal_(True)
+    if args.no_split_heads:
+        args.split_heads = False
+    elif args.split_heads:
+        args.split_heads = True
+    else:
+        # default behavior
+        args.split_heads = True
 
-    from models.personal.model import Classifer
-    model = Classifer(
-        in_dim=in_dim,
-        hidden_dim=args.hidden_dim,
-        num_classes=num_classes,
-        curvature_k=args.curvature,
-        num_heads=args.num_heads,
-        compute_scores=args.compute_scores,
-        value_agg=args.value_agg,
-        concat_operation=args.concat_operation,
-        split_qkv=args.split_qkv,
-        attn_debug=args.attn_debug,
-        num_layers=args.num_layers,
-        attn_mask=attn_mask
-    ).to(device)
+    print(vars(args))
+
+    if args.model == "personal":
+        if args.concat_operation in ("direct", "log-radius") and not args.split_heads:
+            raise ValueError("For personal model: direct/log-radius require --split_heads (do not use --no_split_heads).")
+        if args.concat_operation == "none" and args.split_heads:
+            raise ValueError("For personal model: concat_operation=none requires --no_split_heads (HypFormer-like heads).")
+
+        from models.personal.model import GraphClassifier
+        model = GraphClassifier(
+            in_dim=in_dim,
+            hidden_dim=args.hidden_dim,
+            num_classes=num_classes,
+            curvature_k=args.curvature,
+            num_heads=args.num_heads,
+            compute_scores=args.compute_scores,
+            concat_operation=args.concat_operation,
+            split_heads=args.split_heads,
+            attn_debug=args.attn_debug,
+            num_layers=args.num_layers,
+            attn_mask=attn_mask,
+        ).to(device)
+
+    elif args.model == "hypformer":
+        from models.hypformer.model import GraphClassifier
+        model = GraphClassifier(
+            in_dim=in_dim,
+            hidden_dim=args.hidden_dim,
+            num_classes=num_classes,
+            num_layers=args.num_layers,
+            att_type="full",
+            decoder_type="linear",
+            num_heads=args.num_heads,
+            k=args.curvature,
+            attn_mask=attn_mask
+        ).to(device)
 
     if args.precision:
         model = model.double()
@@ -121,15 +149,7 @@ def train_one_split(args):
             break
 
         loss.backward()
-
-        # g = model.lin_in.weight.grad
-        # print("grad | lin_in", g.abs().mean().item(), g.abs().max().item(), flush=True)
-
         optimizer.step()
-
-        # with torch.no_grad():
-        #     w = model.lin_in.weight
-        #     print("lin_in | mean", w.mean().item(), "std", w.std().item(), flush=True)
 
         train_acc, val_acc, test_acc = evaluate_split(model, dataset, split_idx, device)
 
@@ -167,10 +187,10 @@ def main():
     parser.add_argument("--patience", type=int, default=100)
     parser.add_argument("--log_every", type=int, default=10)
 
-    # model selection (stage 1)
-    parser.add_argument("--model", type=str, default="personal", choices=["personal"])
+    # model selection 
+    parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer"])
 
-    # model hparams
+   # shared hparams
     parser.add_argument("--hidden_dim", type=int, default=64)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=1)
@@ -178,10 +198,11 @@ def main():
     parser.add_argument("--precision", action="store_true")
 
     # personal attention options
+    parser.add_argument("--attn_scope", type=str, default="global", choices=["global", "adjs"])
     parser.add_argument("--compute_scores", type=str, default="lorentz_inner", choices=["lorentz_inner", "signed_dist"])
-    parser.add_argument("--value_agg", type=str, default="midpoint", choices=["midpoint", "riemannian"])
-    parser.add_argument("--concat_operation", type=str, default="direct", choices=["direct", "log-radius"])
-    parser.add_argument("--split_qkv", action="store_true")
+    parser.add_argument("--concat_operation", type=str, default="direct", choices=["direct", "log-radius", "none"])
+    parser.add_argument("--split_heads", action="store_true", help="(personal) Split hidden dim across heads (D//H per head). Required for direct/log-radius.")
+    parser.add_argument("--no_split_heads", action="store_true", help="(personal) Do NOT split dim across heads (D per head). Use with concat_operation=none for HypFormer-like.")
     parser.add_argument("--attn_debug", action="store_true")
 
     # optimizer

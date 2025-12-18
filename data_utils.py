@@ -61,11 +61,11 @@ def class_rand_splits(label, label_num_per_class, valid_num=500, test_num=1000):
 
 def normalize_feat(mx):
     """Row-normalize np array or scipy sparse matrix."""
-    rowsum = np.array(mx.sum(1))
-    r_inv = np.power(rowsum, -1).flatten()
-    r_inv[np.isinf(r_inv)] = 0.0
-    r_mat_inv = sp.diags(r_inv)
-    return r_mat_inv.dot(mx)
+    rowsum = np.array(mx.sum(1)).flatten()
+    r_inv = np.zeros_like(rowsum)
+    nonzero = rowsum != 0
+    r_inv[nonzero] = 1.0 / rowsum[nonzero]
+    return sp.diags(r_inv).dot(mx)
 
 
 def eval_acc(y_true, y_pred):
