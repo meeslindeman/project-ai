@@ -108,6 +108,8 @@ class EuclideanModel(nn.Module):
         if x.dim() == 2:
             x = x.unsqueeze(0)                                  
             squeeze_batch = True
+        elif x.dim() != 3:               
+            raise ValueError(f"x must be [N,D] or [B,N,D], got {x.shape}")
         
         # project to hidden dim and normalize
         x = self.lin_in(x)                      # [B, N, D]             

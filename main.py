@@ -85,19 +85,20 @@ def train_one_split(args):
         if args.concat_operation == "none" and args.split_heads:
             raise ValueError("For personal model: concat_operation=none requires --no_split_heads (HypFormer-like heads).")
 
-        from models.personal.model import GraphClassifier
-        model = GraphClassifier(
+        from models.personal.model import PersonalModel
+        model = PersonalModel(
             input_dim=in_dim,
             hidden_dim=args.hidden_dim,
             num_classes=num_classes,
-            curvature_k=args.curvature,
+            num_layers=args.num_layers,
             num_heads=args.num_heads,
             compute_scores=args.compute_scores,
             concat_operation=args.concat_operation,
             split_heads=args.split_heads,
+            curvature_k=args.curvature,
             attn_debug=args.attn_debug,
-            num_layers=args.num_layers,
             attn_mask=attn_mask,
+            alpha=args.alpha
         ).to(device)
 
     elif args.model == "hypformer":
