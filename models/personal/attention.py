@@ -201,7 +201,12 @@ class LorentzAttention(nn.Module):
             )
 
         if attn_mask is not None:
-            m = attn_mask[None, None, :, :]  # [1,1,N,N]
+            if attn_mask.dim() == 2:
+                m = attn_mask[None, None, :, :]      # [1,1,N,N]
+            elif attn_mask.dim() == 3:
+                m = attn_mask[:, None, :, :]         # [B,1,N,N]
+            else:
+                raise ValueError(...)
             scores = scores.masked_fill(~m, -1e9)
 
         attn = F.softmax(scores, dim=-1)  # [B,H,N,N]

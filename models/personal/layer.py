@@ -23,9 +23,9 @@ class LorentzMLR(nn.Module):
         super().__init__()
         self.manifold = Lorentz(k)
         self.linear = LorentzFC(in_features, out_features, self.manifold, reset_params=reset_params, activation=activation)
-        self.input = input_space
+        self.input_space = input_space
     
     def forward(self, x):
-        if self.input == "euclidean":
+        if self.input_space == "euclidean":
             x = self.manifold.expmap0(x)
         return self.linear.compute_output_space(x) 
