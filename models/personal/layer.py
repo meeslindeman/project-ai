@@ -19,11 +19,11 @@ LorentzFC = Lorentz_fully_connected
 class LorentzMLR(nn.Module):
     """A fully connected layer in the Lorentz model. with identity activation."""
     # the activation is the identity
-    def __init__(self, in_features: int, out_features: int, k: float = 0.1, reset_params: str = "kaiming", activation: nn.Module = nn.Identity(), input: str = "lorentz") -> None:
+    def __init__(self, in_features: int, out_features: int, k: float = 0.1, reset_params: str = "kaiming", activation: nn.Module = nn.Identity(), input_space: str = "lorentz") -> None:
         super().__init__()
         self.manifold = Lorentz(k)
         self.linear = LorentzFC(in_features, out_features, self.manifold, reset_params=reset_params, activation=activation)
-        self.input = input
+        self.input = input_space
     
     def forward(self, x):
         if self.input == "euclidean":

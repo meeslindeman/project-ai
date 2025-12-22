@@ -6,10 +6,10 @@ from models.hypformer.lorentz import Lorentz
 from models.hypformer.attention import HypformerAttention
 from models.hypformer.decoder import HyperbolicCLS, HyperbolicLinear
 
-class GraphClassifier(nn.Module):
+class Hypformer(nn.Module):
     def __init__(
         self, 
-        in_dim: int, 
+        input_dim: int, 
         hidden_dim: int, 
         num_classes: int, 
         num_layers: int = 2,

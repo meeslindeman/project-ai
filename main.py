@@ -87,7 +87,7 @@ def train_one_split(args):
 
         from models.personal.model import GraphClassifier
         model = GraphClassifier(
-            in_dim=in_dim,
+            input_dim=in_dim,
             hidden_dim=args.hidden_dim,
             num_classes=num_classes,
             curvature_k=args.curvature,
@@ -101,9 +101,9 @@ def train_one_split(args):
         ).to(device)
 
     elif args.model == "hypformer":
-        from models.hypformer.model import GraphClassifier
-        model = GraphClassifier(
-            in_dim=in_dim,
+        from models.hypformer.model import Hypformer
+        model = Hypformer(
+            input_dim=in_dim,
             hidden_dim=args.hidden_dim,
             num_classes=num_classes,
             num_layers=args.num_layers,
@@ -115,14 +115,16 @@ def train_one_split(args):
         ).to(device)
 
     elif args.model == "euclidean":
-        from models.euclidean.model import GraphClassifier
-        model = GraphClassifier(
-            in_dim=in_dim,
+        from models.euclidean.model import EuclideanModel
+        model = EuclideanModel(
+            input_dim=in_dim,
             hidden_dim=args.hidden_dim,
             num_classes=num_classes,
             num_heads=args.num_heads,
             num_layers=args.num_layers,
-            attn_mask=attn_mask
+            attn_mask=attn_mask,
+            alpha=args.alpha,
+            lorentz_map=args.lorentz_map
         ).to(device)
 
     if args.precision:
@@ -200,11 +202,13 @@ def main():
 
     # model selection 
     parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer", "euclidean", "euclidean_map"])
+    parser.add_argument("--lorentz_map", action="store_true", help="Use Lorentz mapping for final classification layer (euclidean)")
 
    # shared hparams
     parser.add_argument("--hidden_dim", type=int, default=64)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=1)
+    parser.add_argument("--alpha", type=float, default=1.0, help="Residual connection weight")
     parser.add_argument("--curvature", type=float, default=0.1)
     parser.add_argument("--precision", action="store_true")
 

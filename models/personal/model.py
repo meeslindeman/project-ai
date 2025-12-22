@@ -46,7 +46,7 @@ class GraphClassifier(nn.Module):
             out_features=num_classes,
             k=curvature_k,
             reset_params="kaiming",
-            input="lorentz",
+            input_space="lorentz",
         )
 
     @staticmethod
