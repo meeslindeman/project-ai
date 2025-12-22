@@ -223,9 +223,16 @@ class Lorentz(nn.Module):
 
         return pooled
 
-    def proj(self, x: torch.Tensor) -> torch.Tensor:
-        # enforce <x,x>_L = -1/k
-        k = self.k()
-        xx = self.inner(x, x, keepdim=True)                  # [..., 1]
-        scale = (k * (-xx).clamp_min(self.eps)).sqrt()       # [..., 1]
-        return x / scale
+    def lorentz_residual(self, x: torch.Tensor, y: torch.Tensor, wx: float, wy: float, eps: float = 1e-9):
+        # x,y: [..., 1+d] on Lorentz hyperboloid
+        z = wx * x + wy * y
+
+        # Minkowski inner <z,z>_L = -t^2 + ||space||^2
+        t = z[..., :1]
+        s = z[..., 1:]
+        zz = -t * t + (s * s).sum(dim=-1, keepdim=True)  # [...,1] typically negative
+
+        k = self.k()  # positive
+        scale = torch.sqrt(torch.clamp((1.0 / k) / (-zz + eps), min=eps))
+        out = scale * z
+        return out
