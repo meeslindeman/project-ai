@@ -2,6 +2,7 @@ __pycache__/
 tutorial/
 data/
 *.job
+*.yaml
 output/
 wandb/
 external/
