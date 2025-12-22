@@ -114,6 +114,17 @@ def train_one_split(args):
             attn_mask=attn_mask
         ).to(device)
 
+    elif args.model == "euclidean":
+        from models.euclidean.model import GraphClassifier
+        model = GraphClassifier(
+            in_dim=in_dim,
+            hidden_dim=args.hidden_dim,
+            num_classes=num_classes,
+            num_heads=args.num_heads,
+            num_layers=args.num_layers,
+            attn_mask=attn_mask
+        ).to(device)
+
     if args.precision:
         model = model.double()
         dataset.graph["node_feat"] = dataset.graph["node_feat"].double()
@@ -188,7 +199,7 @@ def main():
     parser.add_argument("--log_every", type=int, default=10)
 
     # model selection 
-    parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer"])
+    parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer", "euclidean", "euclidean_map"])
 
    # shared hparams
     parser.add_argument("--hidden_dim", type=int, default=64)
@@ -208,7 +219,7 @@ def main():
     # optimizer
     parser.add_argument("--optimizer", type=str, default="RiemannianAdam", choices=["Adam", "RiemannianAdam"])
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--wd", type=float, default=5e-4)
+    parser.add_argument("--wd", type=float, default=1e-3)
 
     args = parser.parse_args()
     set_seed(args.seed)
