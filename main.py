@@ -111,7 +111,9 @@ def train_one_split(args):
             decoder_type="linear",
             num_heads=args.num_heads,
             k=args.curvature,
-            attn_mask=attn_mask
+            attn_mask=attn_mask,
+            alpha=args.alpha,
+            dropout=args.dropout
         ).to(device)
 
     elif args.model == "euclidean":
@@ -209,6 +211,7 @@ def main():
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=1)
     parser.add_argument("--alpha", type=float, default=1.0, help="Residual connection weight")
+    parser.add_argument("--dropout", type=float, default=0.0, help="Dropout rate (not fully implemented)")
     parser.add_argument("--curvature", type=float, default=0.1)
     parser.add_argument("--precision", action="store_true")
 
