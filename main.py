@@ -69,22 +69,9 @@ def train_one_split(args):
         attn_mask[edge_index[0], edge_index[1]] = True
         attn_mask.fill_diagonal_(True)
 
-    if args.no_split_heads:
-        args.split_heads = False
-    elif args.split_heads:
-        args.split_heads = True
-    else:
-        # default behavior
-        args.split_heads = True
-
     print(vars(args))
 
     if args.model == "personal":
-        if args.concat_operation in ("direct", "log-radius") and not args.split_heads:
-            raise ValueError("For personal model: direct/log-radius require --split_heads (do not use --no_split_heads).")
-        if args.concat_operation == "none" and args.split_heads:
-            raise ValueError("For personal model: concat_operation=none requires --no_split_heads (HypFormer-like heads).")
-
         from models.personal.model import PersonalModel
         model = PersonalModel(
             input_dim=in_dim,
@@ -93,7 +80,7 @@ def train_one_split(args):
             num_layers=args.num_layers,
             num_heads=args.num_heads,
             compute_scores=args.compute_scores,
-            concat_operation=args.concat_operation,
+            head_fusion=args.head_fusion,
             split_heads=args.split_heads,
             curvature_k=args.curvature,
             attn_debug=args.attn_debug,
@@ -211,7 +198,7 @@ def main():
     parser.add_argument("--hidden_dim", type=int, default=64)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=1)
-    parser.add_argument("--alpha", type=float, default=1.0, help="Residual connection weight")
+    parser.add_argument("--alpha", type=float, default=0.5, help="Residual connection weight")
     parser.add_argument("--dropout", type=float, default=0.0, help="Dropout rate (not fully implemented)")
     parser.add_argument("--curvature", type=float, default=0.1)
     parser.add_argument("--precision", action="store_true")
@@ -219,9 +206,8 @@ def main():
     # personal attention options
     parser.add_argument("--attn_scope", type=str, default="global", choices=["global", "adjs"])
     parser.add_argument("--compute_scores", type=str, default="lorentz_inner", choices=["lorentz_inner", "signed_dist"])
-    parser.add_argument("--concat_operation", type=str, default="direct", choices=["direct", "log-radius", "none"])
-    parser.add_argument("--split_heads", action="store_true", help="(personal) Split hidden dim across heads (D//H per head). Required for direct/log-radius.")
-    parser.add_argument("--no_split_heads", action="store_true", help="(personal) Do NOT split dim across heads (D per head). Use with concat_operation=none for HypFormer-like.")
+    parser.add_argument("--head_fusion", type=str, default="midpoint", choices=["midpoint", "concat_direct", "concat_logradius"])
+    parser.add_argument("--split_heads", action="store_true", help="(personal) Split hidden dim across heads (D//H per head). Only for manual use; by default inferred from head_fusion.")
     parser.add_argument("--attn_debug", action="store_true")
 
     # optimizer
