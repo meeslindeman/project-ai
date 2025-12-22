@@ -14,10 +14,10 @@ class PersonalMHA(nn.Module):
         curvature_k: float,
         num_heads: int = 1,
         compute_scores: str = "lorentz_inner",
-        concat_operation: str = "direct",
-        split_heads: bool = True,
+        head_fusion: str = "midpoint",
+        split_heads: bool | None = True,
         a_default: float = 0.0,
-        attn_debug: bool = False,
+        attn_debug: bool = False
     ) -> None:
         super().__init__()
         self.manifold = manifold
@@ -26,7 +26,7 @@ class PersonalMHA(nn.Module):
             curvature=curvature_k,
             num_heads=num_heads,
             compute_scores=compute_scores,
-            concat_operation=concat_operation,
+            head_fusion=head_fusion,
             split_heads=split_heads,
             out_dim=hidden_dim,                # produces output in lorentz dim = 1 + spatial dim
             debug=attn_debug
@@ -86,8 +86,8 @@ class PersonalModel(nn.Module):
         num_layers: int = 1,
         num_heads: int = 1,
         compute_scores: str = "lorentz_inner",
-        concat_operation: str = "direct",
-        split_heads: bool = True,
+        head_fusion: str = "midpoint",
+        split_heads: bool | None = True,
         curvature_k: float = 0.1,
         attn_debug: bool = False,
         attn_mask: torch.Tensor = None,
@@ -108,7 +108,7 @@ class PersonalModel(nn.Module):
                 curvature_k=curvature_k,
                 num_heads=num_heads,
                 compute_scores=compute_scores,
-                concat_operation=concat_operation,
+                head_fusion=head_fusion,
                 split_heads=split_heads,
                 a_default=a_default,
                 attn_debug=attn_debug
@@ -175,7 +175,7 @@ class PersonalModel(nn.Module):
 
         for mha, ffn in zip(self.mha_layers, self.ffn_layers):
             y_lorentz = mha(x_lorentz, attn_mask=self.attn_mask)
-
+            
             x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
 
             y_lorentz = ffn(x_lorentz)

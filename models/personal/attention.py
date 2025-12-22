@@ -17,67 +17,83 @@ class LorentzAttention(nn.Module):
             curvature: float = 0.1, 
             num_heads: int = 1, 
             compute_scores: str = "lorentz_inner", 
-            concat_operation: str = "direct", 
+            head_fusion: str = "midpoint",
+            split_heads: bool | None = True,
             out_dim: int | None = None,
             a_default: float = 0.0,
-            split_heads: bool = True,
             debug: bool = False,
             attn_mask: torch.Tensor | None = None
         ) -> None:
         super().__init__()
         self.lorentz_dim = input_dim
+        self.spatial_dim = input_dim - 1
         self.curvature = curvature
         self.num_heads = num_heads
         self.compute_scores = compute_scores
-        self.concat_operation = concat_operation
-        self.split_heads = split_heads
+        self.head_fusion = head_fusion
         self.debug = debug
+        self.attn_mask = attn_mask 
 
-        self.manifold = Lorentz(self.curvature)
-        self.spatial_dim = self.lorentz_dim - 1
+        self.manifold = Lorentz(curvature)
 
+        valid_fusions = ("midpoint", "concat_direct", "concat_logradius")
+        if head_fusion not in valid_fusions:
+            raise ValueError(f"Unknown head_fusion: {head_fusion}. Must be one of {valid_fusions}")
+
+        if split_heads is None:
+            split_heads = (head_fusion != "midpoint")  # midpoint => HypFormer-style full-dim heads
+        if head_fusion == "midpoint" and split_heads:
+            raise ValueError("head_fusion='midpoint' does not support split_heads=True (would shrink dim to D/H).")
+        if head_fusion in ("concat_direct", "concat_logradius") and not split_heads:
+            raise ValueError("concat_* head_fusion requires split_heads=True.")
+        self.split_heads = split_heads
+
+        if self.num_heads < 1:
+            raise ValueError("num_heads must be >= 1")
         if self.split_heads:
-            assert self.spatial_dim % num_heads == 0
-            self.head_spatial_dim = self.spatial_dim // num_heads
+            if self.spatial_dim % self.num_heads != 0:
+                raise ValueError(f"spatial_dim ({self.spatial_dim}) must be divisible by num_heads ({self.num_heads})")
+            self.head_spatial_dim = self.spatial_dim // self.num_heads
         else:
-            # hypformer-like heads: each head has full spatial dim
-            self.head_spatial_dim = self.spatial_dim 
+            self.head_spatial_dim = self.spatial_dim  # full-dim heads
 
         self.head_lorentz_dim = self.head_spatial_dim + 1
         self.scale = 1.0 / math.sqrt(self.head_spatial_dim)
         self.temperature = nn.Parameter(torch.tensor(1.0))
 
-        # validate head fusion choices
-        if (not self.split_heads) and (self.concat_operation in ("direct", "log-radius")):
-            raise ValueError("direct/log-radius concat requires split_heads=True (D//H per head).")
-        if self.num_heads > 1 and self.concat_operation == "none" and self.split_heads:
-            raise ValueError("concat_operation='none' with split_heads=True shrinks dim; set split_heads=False for HypFormer-like.")
-
-        self.W_q = nn.ModuleList()
-        self.W_k = nn.ModuleList()
-        self.W_v = nn.ModuleList()
-        head_out = self.head_spatial_dim
-        for _ in range(self.num_heads):
-            self.W_q.append(LorentzFC(self.spatial_dim, head_out, manifold=self.manifold))
-            self.W_k.append(LorentzFC(self.spatial_dim, head_out, manifold=self.manifold))
-            self.W_v.append(LorentzFC(self.spatial_dim, head_out, manifold=self.manifold))
+        self.W_q = nn.ModuleList([
+            LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold)
+            for _ in range(self.num_heads)
+        ])
+        self.W_k = nn.ModuleList([
+            LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold)
+            for _ in range(self.num_heads)
+        ])
+        self.W_v = nn.ModuleList([
+            LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold)
+            for _ in range(self.num_heads)
+        ])
 
         # output projection expects different spatial size depending on fusion
-        if self.num_heads == 1 or self.concat_operation == "none":
+        if self.num_heads == 1:
             in_spatial_out = self.head_spatial_dim
         else:
-            in_spatial_out = self.num_heads * self.head_spatial_dim
+            if self.head_fusion == "midpoint":
+                in_spatial_out = self.spatial_dim  # full-dim heads; midpoint keeps D
+            else:
+                in_spatial_out = self.spatial_dim  # concat_* reconstructs full D
 
         if out_dim is None:
             out_dim = self.spatial_dim
         self.out_dim = out_dim
-
         self.W_o = LorentzFC(in_spatial_out, self.out_dim, manifold=self.manifold)
 
-        if self.concat_operation == "log-radius":
-            n = self.num_heads * self.head_spatial_dim
+        if self.head_fusion == "concat_logradius":
+            n = self.spatial_dim            
             ni = self.head_spatial_dim
-            s_val = torch.exp(0.5 * (digamma(torch.tensor(n / 2.0)) - digamma(torch.tensor(ni / 2.0))))
+            s_val = torch.exp(
+                0.5 * (digamma(torch.tensor(n / 2.0)) - digamma(torch.tensor(ni / 2.0)))
+            )
             self.register_buffer("log_radius_scale", s_val)
         
     @staticmethod
@@ -119,35 +135,44 @@ class LorentzAttention(nn.Module):
         return d2
 
     def _concat_heads_direct(self, x: torch.Tensor) -> torch.Tensor:
-        B, H, N, D_head = x.shape
-        d_head = D_head - 1
-        x = x.permute(0, 2, 1, 3)          # [B,N,H,1+d_head]
-        space = x[..., 1:]                 # [B,N,H,d_head]
+        # Qu, E., et al. (https://openreview.net/forum?id=NQi9U0YLW3)
+        B, H, N, Dh = x.shape
+        d_head = Dh - 1
+        k = torch.as_tensor(self.manifold.k(), device=x.device, dtype=x.dtype)
+
+        x = x.permute(0, 2, 1, 3).contiguous()  # [B, N, H, Dh]
+        time = x[..., :1]                       # [B, N, H, 1]
+        space = x[..., 1:]                      # [B, N, H, d_head]
+
+        # concatenate spatial components 
         space_cat = space.reshape(B, N, H * d_head)
 
-        k = self.manifold.k()
-        u_sq = (space_cat ** 2).sum(dim=-1, keepdim=True)
-        t_prime = torch.sqrt(torch.clamp(1.0 / k + u_sq, min=1e-9))
+        # t'^2 = sum_i t_i^2 - (H-1)/k
+        time_sq_sum = (time ** 2).sum(dim=2)          # [B, N, 1]
+        t_prime = torch.sqrt((time_sq_sum - (H - 1) / k).clamp_min(1e-9))  # [B, N, 1]
+
         out = torch.cat([t_prime, space_cat], dim=-1)
         return out
     
     def _concat_heads_log_radius(self, x: torch.Tensor) -> torch.Tensor:
-        B, H, N, D_h = x.shape
-        d_head = D_h - 1
+        # Intrinci Lorentz paper
+        B, H, N, Dh = x.shape
+        d_head = Dh - 1
+        k = torch.as_tensor(self.manifold.k(), device=x.device, dtype=x.dtype)
 
-        x = x.permute(0, 2, 1, 3)          # [B,N,H,1+d_head]
-        time = x[..., :1]                  # [B,N,H,1]
-        space = x[..., 1:]                 # [B,N,H,d_head]
+        s = self.log_radius_scale.to(device=x.device, dtype=x.dtype)
 
-        k_val = self.manifold.k()
-        s = self.log_radius_scale
-        space_tilde = s * space
+        x = x.permute(0, 2, 1, 3).contiguous()  
+        space = x[..., 1:]                       # [B, N, H, d_head]
 
-        t_sq = (time ** 2).squeeze(-1)     # [B,N,H]
-        sum_term = (t_sq - 1.0 / k_val).sum(dim=2, keepdim=True)
-        t_prime = torch.sqrt(torch.clamp(1.0 / k_val + (s ** 2) * sum_term, min=1e-9))
+        # scale spatial components
+        space_cat = (s * space).reshape(B, N, H * d_head)
 
-        space_cat = space_tilde.reshape(B, N, H * d_head)
+        # recompute a single time coordinate so that:
+        # -t'^2 + ||space_cat||^2 = -1/k  =>  t'^2 = 1/k + ||space_cat||^2
+        space_sq = (space_cat ** 2).sum(dim=-1, keepdim=True)       # [B, N, 1]
+        t_prime = torch.sqrt((1.0 / k + space_sq).clamp_min(1e-9))  # [B, N, 1]
+
         out = torch.cat([t_prime, space_cat], dim=-1)
         return out
 
@@ -221,7 +246,6 @@ class LorentzAttention(nn.Module):
 
         # use mid_point only
         # optional: look at gyro agg
-        # omit riemannian for now, does not work well with multiple heads
         out = self.manifold.mid_point(v, attn)
         
         if self.debug:
@@ -232,19 +256,17 @@ class LorentzAttention(nn.Module):
             )
                     
         if self.num_heads > 1:
-            if self.concat_operation == "none":
-                # explicit midpoint over heads for each (B,N)
-                B, H, N, Dlor = out.shape
-                out = out.permute(0, 2, 1, 3).contiguous().view(B * N, H, Dlor)
-                out = self.manifold.mid_point(out).view(B, N, Dlor)
-            elif self.concat_operation == "direct":
-                out = self._concat_heads_direct(out)      # [B,N,1+D]
-            elif self.concat_operation == "log-radius":
-                out = self._concat_heads_log_radius(out)  # [B,N,1+D]
-            else:
-                raise NotImplementedError(f"Unknown concat_operation: {self.concat_operation}")
+            if self.head_fusion == "midpoint":
+                # hypformer style -> full-dim heads + midpoint
+                B, H, N, D_lorentz = out.shape
+                out = out.permute(0, 2, 1, 3).contiguous().view(B * N, H, D_lorentz)
+                out = self.manifold.mid_point(out).view(B, N, D_lorentz)
+            elif self.head_fusion == "concat_direct":
+                out = self._concat_heads_direct(out)      
+            elif self.head_fusion == "concat_logradius":
+                out = self._concat_heads_log_radius(out) 
         else:
-            out = out.squeeze(1)  # [B,N,1+d_head]
+            out = out.squeeze(1)
 
         if self.debug:
             logger.debug(
