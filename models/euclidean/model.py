@@ -111,7 +111,7 @@ class EuclideanModel(nn.Module):
         
         # project to hidden dim and normalize
         x = self.lin_in(x)                      # [B, N, D]             
-        x = F.normalize(x, p=2, dim=-1) * 1.0                                                    
+        x = F.normalize(x, p=2, dim=-1) * 0.1                                                    
 
         for mha, ffn in zip(self.mha_layers, self.ffn_layers):
             y = mha(x, adj_mask=self.attn_mask)                   
