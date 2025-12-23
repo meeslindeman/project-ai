@@ -2,6 +2,7 @@ import argparse
 import random
 import numpy as np
 import torch
+import wandb
 import torch.nn.functional as F
 
 from dataset import load_nc_dataset
@@ -42,7 +43,8 @@ def evaluate_split(model, dataset, split_idx, device):
 
 def train_one_split(args):
     device = get_device()
-    print(f"Device: {device}")
+    print(f"Device: {device} | Using model: {args.model}")
+    print(f"Args: {args}")
 
     dataset = load_nc_dataset(args)
 
@@ -68,8 +70,6 @@ def train_one_split(args):
         attn_mask = torch.zeros(N, N, dtype=torch.bool, device=device)
         attn_mask[edge_index[0], edge_index[1]] = True
         attn_mask.fill_diagonal_(True)
-
-    print(vars(args))
 
     if args.model == "personal":
         from models.personal.model import PersonalModel
@@ -156,6 +156,15 @@ def train_one_split(args):
 
         train_acc, val_acc, test_acc = evaluate_split(model, dataset, split_idx, device)
 
+        if args.wandb:
+            wandb.log({
+                "train/loss": loss.item(),
+                "train/acc": train_acc,
+                "val/acc": val_acc,
+                "test/acc": test_acc,
+                "epoch": epoch
+            })
+
         if epoch % args.log_every == 0 or epoch == 1:
             print(
                 f"Epoch {epoch:03d} | loss {loss.item():.4f} | "
@@ -176,7 +185,23 @@ def train_one_split(args):
     return best_test
 
 
-def main():
+def main(args):
+    if args.wandb:
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            group=args.wandb_group,
+            name=f"{args.model}_num_heads={args.num_heads}_lr={args.lr}_head_fusion={args.head_fusion}",
+            config=vars(args)
+        )
+        for k, v in wandb.config.items():
+            setattr(args, k, v)
+        wandb.config.update(vars(args), allow_val_change=True)
+
+    train_one_split(args)
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser("Node classification (heterophily)")
 
     # dataset
@@ -186,7 +211,7 @@ def main():
     # run control
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--split", type=int, default=0, help="0..9 for fixed splits")
-    parser.add_argument("--epochs", type=int, default=1000)
+    parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--patience", type=int, default=100)
     parser.add_argument("--log_every", type=int, default=10)
 
@@ -194,7 +219,7 @@ def main():
     parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer", "euclidean", "euclidean_map"])
     parser.add_argument("--lorentz_map", action="store_true", help="Use Lorentz mapping for final classification layer (euclidean)")
 
-   # shared hparams
+    # shared hparams
     parser.add_argument("--hidden_dim", type=int, default=64)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=1)
@@ -215,10 +240,12 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--wd", type=float, default=1e-3)
 
+    # wandb args
+    parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
+    parser.add_argument("--wandb_project", type=str, default="hyperbolic-vit")
+    parser.add_argument('--wandb_entity', type=str, default="hyperbolic-vit-team", help="W&B entity (username or team)")
+    parser.add_argument("--wandb_group", type=str, default="kg-experiments", help="Group name for run grouping")
+
     args = parser.parse_args()
     set_seed(args.seed)
-    train_one_split(args)
-
-
-if __name__ == "__main__":
-    main()
+    main(args)

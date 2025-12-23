@@ -120,18 +120,21 @@ class LorentzAttention(nn.Module):
         
     @staticmethod
     def _lorentz_inner(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        x_t, x_x = x[..., :1], x[..., 1:]
-        y_t, y_x = y[..., :1], y[..., 1:]
+        """
+        Compute Lorentz inner product: -t_x * t_y + <s_x, s_y>
+        """
+        x_t, x_x = x[..., :1], x[..., 1:]  # [B, H, N, 1], [B, H, N, head_spatial_dim]
+        y_t, y_x = y[..., :1], y[..., 1:]  # [B, H, N, 1], [B, H, N, head_spatial_dim]
 
-        time = torch.matmul(x_t, y_t.transpose(-1, -2))    # [B, H, N, N]
-        space = torch.matmul(x_x, y_x.transpose(-1, -2))   # [B, H, N, N]
+        time = torch.matmul(x_t, y_t.transpose(-1, -2))    # [B, H, N, 1] @ [B, H, 1, N] -> [B, H, N, N]
+        space = torch.matmul(x_x, y_x.transpose(-1, -2))   # [B, H, N, head_spatial_dim] @ [B, H, head_spatial_dim, N] -> [B, H, N, N]
 
-        return -time + space
+        return -time + space  # [B, H, N, N]
 
     def _lorentz_sqdist(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         lp = self._lorentz_inner(x, y)          # [B, H, N, N]
         k = self.manifold.k()
-        d2 = -2.0 * k - 2.0 * lp
+        d2 = -2.0 * k - 2.0 * lp  # [B, H, N, N]
         return d2
 
     def _concat_heads_direct(self, x: torch.Tensor) -> torch.Tensor:
@@ -140,40 +143,42 @@ class LorentzAttention(nn.Module):
         d_head = Dh - 1
         k = torch.as_tensor(self.manifold.k(), device=x.device, dtype=x.dtype)
 
-        x = x.permute(0, 2, 1, 3).contiguous()  # [B, N, H, Dh]
+        x = x.permute(0, 2, 1, 3).contiguous()  # [B, H, N, 1+head_spatial_dim] -> [B, N, H, 1+head_spatial_dim]
         time = x[..., :1]                       # [B, N, H, 1]
-        space = x[..., 1:]                      # [B, N, H, d_head]
+        space = x[..., 1:]                      # [B, N, H, head_spatial_dim]
 
-        # concatenate spatial components 
-        space_cat = space.reshape(B, N, H * d_head)
+        space_cat = space.reshape(B, N, H * d_head)  # [B, N, H*head_spatial_dim] = [B, N, spatial_dim]
 
-        # t'^2 = sum_i t_i^2 - (H-1)/k
-        time_sq_sum = (time ** 2).sum(dim=2)          # [B, N, 1]
-        t_prime = torch.sqrt((time_sq_sum - (H - 1) / k).clamp_min(1e-9))  # [B, N, 1]
+        # t'² = Σt_i² + (H-1)/k
+        time_sq_sum = (time ** 2).sum(dim=2)                # [B, N, H, 1] -> [B, N, 1]
+        time_sq_sum = time_sq_sum + (H - 1) / k  # [B, N, 1]
+        t_prime = torch.sqrt(time_sq_sum.clamp_min(1e-9))   # [B, N, 1]
 
-        out = torch.cat([t_prime, space_cat], dim=-1)
+        out = torch.cat([t_prime, space_cat], dim=-1)  # [B, N, 1+spatial_dim]
         return out
     
     def _concat_heads_log_radius(self, x: torch.Tensor) -> torch.Tensor:
-        # Intrinci Lorentz paper
+        # Anonymous, et al. (https://openreview.net/forum?id=NNnkLi1ALt)
         B, H, N, Dh = x.shape
         d_head = Dh - 1
         k = torch.as_tensor(self.manifold.k(), device=x.device, dtype=x.dtype)
 
-        s = self.log_radius_scale.to(device=x.device, dtype=x.dtype)
+        s = self.log_radius_scale.to(device=x.device, dtype=x.dtype)  # scalar
 
-        x = x.permute(0, 2, 1, 3).contiguous()  
-        space = x[..., 1:]                       # [B, N, H, d_head]
+        x = x.permute(0, 2, 1, 3).contiguous()  # [B, H, N, 1+head_spatial_dim] -> [B, N, H, 1+head_spatial_dim]
+        time = x[..., :1]                       # [B, N, H, 1]
+        space = x[..., 1:]                      # [B, N, H, head_spatial_dim]
 
-        # scale spatial components
-        space_cat = (s * space).reshape(B, N, H * d_head)
+        # scale spatial components: ũi = s * ui
+        space_scaled = (s * space)  # [B, N, H, head_spatial_dim]
+        space_cat = space_scaled.reshape(B, N, H * d_head)  # [B, N, H*head_spatial_dim] = [B, N, spatial_dim]
 
-        # recompute a single time coordinate so that:
-        # -t'^2 + ||space_cat||^2 = -1/k  =>  t'^2 = 1/k + ||space_cat||^2
-        space_sq = (space_cat ** 2).sum(dim=-1, keepdim=True)       # [B, N, 1]
-        t_prime = torch.sqrt((1.0 / k + space_sq).clamp_min(1e-9))  # [B, N, 1]
+        # recompute time coordinate: t' = sqrt(1/K + s² * Σ(ti² + 1/K))
+        time_sq_plus_invk = (time ** 2) + (1.0 / k)  # [B, N, H, 1]
+        time_sum = time_sq_plus_invk.sum(dim=2)      # [B, N, H, 1] -> [B, N, 1]
+        t_prime = torch.sqrt((1.0 / k + s ** 2 * time_sum).clamp_min(1e-9))  # [B, N, 1]
 
-        out = torch.cat([t_prime, space_cat], dim=-1)
+        out = torch.cat([t_prime, space_cat], dim=-1)  # [B, N, 1+spatial_dim]
         return out
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None, attn_mask: torch.Tensor | None = None) -> torch.Tensor:
@@ -188,9 +193,10 @@ class LorentzAttention(nn.Module):
                 bool(torch.isnan(x).any()),
             )
 
-        q = torch.stack([self.W_q[h](x) for h in range(self.num_heads)], dim=1)  # [B,H,N,1+d_head]
-        k = torch.stack([self.W_k[h](x) for h in range(self.num_heads)], dim=1)
-        v = torch.stack([self.W_v[h](x) for h in range(self.num_heads)], dim=1)
+        # project to per-head dimensions: [B, N, 1+spatial_dim] -> [B, N, 1+head_spatial_dim] per head
+        q = torch.stack([self.W_q[h](x) for h in range(self.num_heads)], dim=1)  # [B, H, N, 1+head_spatial_dim]
+        k = torch.stack([self.W_k[h](x) for h in range(self.num_heads)], dim=1)  # [B, H, N, 1+head_spatial_dim]
+        v = torch.stack([self.W_v[h](x) for h in range(self.num_heads)], dim=1)  # [B, H, N, 1+head_spatial_dim]
         
         if self.debug:
             logger.debug(
@@ -210,10 +216,10 @@ class LorentzAttention(nn.Module):
             )
 
         if self.compute_scores == "lorentz_inner":
-            scores = self._lorentz_inner(q, k) * self.scale   
+            scores = self._lorentz_inner(q, k) * self.scale   # [B, H, N, N]
         elif self.compute_scores == "signed_dist":
-            d2 = self._lorentz_sqdist(q, k)             
-            scores = -d2 * self.scale * self.temperature
+            d2 = self._lorentz_sqdist(q, k)             # [B, H, N, N]
+            scores = -d2 * self.scale * self.temperature  # [B, H, N, N]
         else:
             raise ValueError(f"Unknown compute_scores mode: {self.compute_scores}")
         
@@ -227,14 +233,14 @@ class LorentzAttention(nn.Module):
 
         if attn_mask is not None:
             if attn_mask.dim() == 2:
-                m = attn_mask[None, None, :, :]      # [1,1,N,N]
+                m = attn_mask[None, None, :, :]      # [N, N] -> [1, 1, N, N]
             elif attn_mask.dim() == 3:
-                m = attn_mask[:, None, :, :]         # [B,1,N,N]
+                m = attn_mask[:, None, :, :]         # [B, N, N] -> [B, 1, N, N]
             else:
-                raise ValueError(...)
-            scores = scores.masked_fill(~m, -1e9)
+                raise ValueError(f"attn_mask must be 2D or 3D, got {attn_mask.dim()}D")
+            scores = scores.masked_fill(~m, -1e9)  # [B, H, N, N]
 
-        attn = F.softmax(scores, dim=-1)  # [B,H,N,N]
+        attn = F.softmax(scores, dim=-1)  # [B, H, N, N]
 
         if self.debug:
             logger.debug(
@@ -244,9 +250,9 @@ class LorentzAttention(nn.Module):
                 attn.max().item(),
             )
 
-        # use mid_point only
-        # optional: look at gyro agg
-        out = self.manifold.mid_point(v, attn)
+        # weighted aggregation: [B, H, N, 1+head_spatial_dim] with weights [B, H, N, N]
+        # mid_point computes: weighted_sum = attn @ v, then projects to manifold
+        out = self.manifold.mid_point(v, attn)  # [B, H, N, 1+head_spatial_dim]
         
         if self.debug:
             logger.debug(
@@ -255,18 +261,18 @@ class LorentzAttention(nn.Module):
                 bool(torch.isnan(out).any()),
             )
                     
+        # fuse multiple heads
         if self.num_heads > 1:
             if self.head_fusion == "midpoint":
-                # hypformer style -> full-dim heads + midpoint
                 B, H, N, D_lorentz = out.shape
-                out = out.permute(0, 2, 1, 3).contiguous().view(B * N, H, D_lorentz)
-                out = self.manifold.mid_point(out).view(B, N, D_lorentz)
+                out = out.permute(0, 2, 1, 3).contiguous().view(B * N, H, D_lorentz) # [B, N, H, D_lorentz] -> [B*N, H, D_lorentz]
+                out = self.manifold.mid_point(out).view(B, N, D_lorentz) # [B, N, D_lorentz] -> [B, N, 1+spatial_dim]
             elif self.head_fusion == "concat_direct":
-                out = self._concat_heads_direct(out)      
+                out = self._concat_heads_direct(out)  # [B, H, N, 1+head_spatial_dim] -> [B, N, 1+spatial_dim]
             elif self.head_fusion == "concat_logradius":
-                out = self._concat_heads_log_radius(out) 
+                out = self._concat_heads_log_radius(out)  # [B, H, N, 1+head_spatial_dim] -> [B, N, 1+spatial_dim]
         else:
-            out = out.squeeze(1)
+            out = out.squeeze(1)  # [B, 1, N, 1+head_spatial_dim] -> [B, N, 1+head_spatial_dim]
 
         if self.debug:
             logger.debug(
@@ -275,7 +281,8 @@ class LorentzAttention(nn.Module):
                 bool(torch.isnan(out).any()),
             )
 
-        out = self.W_o(out)
+        # output projection: [B, N, 1+spatial_dim] -> [B, N, 1+out_dim]
+        out = self.W_o(out) 
         
         if self.debug:
             logger.debug(
@@ -285,5 +292,5 @@ class LorentzAttention(nn.Module):
             )
             logger.debug("=======================================")
             
-        return out
+        return out 
     
