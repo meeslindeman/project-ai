@@ -7,7 +7,9 @@ import torch.nn.functional as F
 
 from dataset import load_nc_dataset
 from data_utils import load_fixed_splits, eval_acc
-from hypll.optim import RiemannianAdam
+# from hypll.optim import RiemannianAdam
+from geoopt.optim.radam import RiemannianAdam
+from geoopt.optim.rsgd import RiemannianSGD
 
 
 def set_seed(seed: int) -> None:
@@ -44,7 +46,6 @@ def evaluate_split(model, dataset, split_idx, device):
 def train_one_split(args):
     device = get_device()
     print(f"Device: {device} | Using model: {args.model}")
-    print(f"Args: {args}")
 
     dataset = load_nc_dataset(args)
 
@@ -72,6 +73,9 @@ def train_one_split(args):
         attn_mask.fill_diagonal_(True)
 
     if args.model == "personal":
+        if args.head_fusion != "midpoint":
+            args.split_heads = True
+            
         from models.personal.model import PersonalModel
         model = PersonalModel(
             input_dim=in_dim,
@@ -127,6 +131,10 @@ def train_one_split(args):
         if RiemannianAdam is None:
             raise RuntimeError("hypll.optim.RiemannianAdam not available in this environment.")
         optimizer = RiemannianAdam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    elif args.optimizer == "RiemannianSGD":
+        if RiemannianSGD is None:
+            raise RuntimeError("geoopt.optim.rsgd.RiemannianSGD not available in this environment.")
+        optimizer = RiemannianSGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
@@ -134,6 +142,8 @@ def train_one_split(args):
     best_test = -1.0
     best_epoch = -1
     bad = 0
+
+    print(f"Starting training with args: {args}")
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -156,11 +166,22 @@ def train_one_split(args):
 
         train_acc, val_acc, test_acc = evaluate_split(model, dataset, split_idx, device)
 
+        if val_acc > best_val:
+            best_val = val_acc
+            best_test = test_acc
+            best_epoch = epoch
+            bad = 0
+        else:
+            bad += 1
+            if bad >= args.patience:
+                break
+
         if args.wandb:
             wandb.log({
                 "train/loss": loss.item(),
                 "train/acc": train_acc,
                 "val/acc": val_acc,
+                "val/best_val": best_val,
                 "test/acc": test_acc,
                 "epoch": epoch
             })
@@ -171,15 +192,8 @@ def train_one_split(args):
                 f"train {train_acc:.4f} val {val_acc:.4f} test {test_acc:.4f}"
             )
 
-        if val_acc > best_val:
-            best_val = val_acc
-            best_test = test_acc
-            best_epoch = epoch
-            bad = 0
-        else:
-            bad += 1
-            if bad >= args.patience:
-                break
+        if bad >= args.patience:
+            break
 
     print(f"Best val {best_val:.4f} at epoch {best_epoch}; corresponding test {best_test:.4f}")
     return best_test
@@ -196,7 +210,6 @@ def main(args):
         )
         for k, v in wandb.config.items():
             setattr(args, k, v)
-        wandb.config.update(vars(args), allow_val_change=True)
 
     train_one_split(args)
 
@@ -236,16 +249,20 @@ if __name__ == "__main__":
     parser.add_argument("--attn_debug", action="store_true")
 
     # optimizer
-    parser.add_argument("--optimizer", type=str, default="RiemannianAdam", choices=["Adam", "RiemannianAdam"])
+    parser.add_argument("--optimizer", type=str, default="RiemannianAdam", choices=["Adam", "RiemannianAdam", "RiemannianSGD"])
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--wd", type=float, default=1e-3)
 
     # wandb args
-    parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases logging')
+    parser.add_argument('--wandb', nargs="?", const=True, default=False, help='Enable Weights & Biases logging')
     parser.add_argument("--wandb_project", type=str, default="hyperbolic-vit")
     parser.add_argument('--wandb_entity', type=str, default="hyperbolic-vit-team", help="W&B entity (username or team)")
     parser.add_argument("--wandb_group", type=str, default="kg-experiments", help="Group name for run grouping")
 
     args = parser.parse_args()
+
+    if isinstance(args.wandb, str):
+        args.wandb = args.wandb.lower() == "true"
+        
     set_seed(args.seed)
     main(args)
