@@ -59,7 +59,6 @@ class LorentzAttention(nn.Module):
 
         self.head_lorentz_dim = self.head_spatial_dim + 1
         self.scale = 1.0 / math.sqrt(self.head_spatial_dim)
-        self.temperature = nn.Parameter(torch.tensor(1.0))
 
         self.W_q = nn.ModuleList([
             LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold)
@@ -219,7 +218,7 @@ class LorentzAttention(nn.Module):
             scores = self._lorentz_inner(q, k) * self.scale   # [B, H, N, N]
         elif self.compute_scores == "signed_dist":
             d2 = self._lorentz_sqdist(q, k)             # [B, H, N, N]
-            scores = -d2 * self.scale * self.temperature  # [B, H, N, N]
+            scores = -d2 * self.scale                   # [B, H, N, N]
         else:
             raise ValueError(f"Unknown compute_scores mode: {self.compute_scores}")
         

@@ -175,12 +175,21 @@ class PersonalModel(nn.Module):
 
         for mha, ffn in zip(self.mha_layers, self.ffn_layers):
             y_lorentz = mha(x_lorentz, attn_mask=self.attn_mask)
+
+            # residual connection
+            if x_lorentz is None:
+                x_lorentz = y_lorentz
+            else:
+                # non-manifold-correct residual (ambient-space hack)
+                x_lorentz = (1.0 - self.alpha) * x_lorentz + self.alpha * y_lorentz
             
-            x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
+            # x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
 
             y_lorentz = ffn(x_lorentz)
 
-            x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
+            # x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
+
+            x_lorentz = (1.0 - self.alpha) * x_lorentz + self.alpha * y_lorentz
 
         logits = self.head(x_lorentz)
 
