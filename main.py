@@ -130,11 +130,11 @@ def train_one_split(args):
     elif args.optimizer == "RiemannianAdam":
         if RiemannianAdam is None:
             raise RuntimeError("hypll.optim.RiemannianAdam not available in this environment.")
-        optimizer = RiemannianAdam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+        optimizer = RiemannianAdam(model.parameters(), lr=args.lr, weight_decay=args.wd, stabilize=args.stabilize)
     elif args.optimizer == "RiemannianSGD":
         if RiemannianSGD is None:
             raise RuntimeError("geoopt.optim.rsgd.RiemannianSGD not available in this environment.")
-        optimizer = RiemannianSGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
+        optimizer = RiemannianSGD(model.parameters(), lr=args.lr, weight_decay=args.wd, stabilize=args.stabilize)
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
@@ -250,8 +250,9 @@ if __name__ == "__main__":
 
     # optimizer
     parser.add_argument("--optimizer", type=str, default="RiemannianAdam", choices=["Adam", "RiemannianAdam", "RiemannianSGD"])
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--wd", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=5e-3)
+    parser.add_argument("--wd", type=float, default=0.001)
+    parser.add_argument("--stabilize", type=int, default=50, help="Stabilize parameters every n steps if they drift off-manifold")
 
     # wandb args
     parser.add_argument('--wandb', nargs="?", const=True, default=False, help='Enable Weights & Biases logging')
