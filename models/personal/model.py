@@ -182,8 +182,7 @@ class PersonalModel(nn.Module):
             else:
                 # non-manifold-correct residual (ambient-space hack)
                 x_lorentz = (1.0 - self.alpha) * x_lorentz + self.alpha * y_lorentz
-            
-            # x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
+                # x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
 
             y_lorentz = ffn(x_lorentz)
 
