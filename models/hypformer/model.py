@@ -31,25 +31,23 @@ class LorentzFFN(nn.Module):
         super().__init__()
         self.manifold = manifold
 
-        # only one linear layer in the feedforward network as hyperbolic layers are inherently non-linear
+        # HypLinear adds time dimension internally
         self.lin = HypLinear(
             manifold=manifold,
-            in_features=hidden_dim, # HypLinear adds time dimension internally
-            out_features=hidden_dim,
-            bias=bias,
-            dropout=dropout,
-            manifold_out=manifold
+            in_features=hidden_dim - 1, 
+            out_features=hidden_dim - 1,
+            bias=bias
         )
 
     def forward(self, x_lorentz: torch.Tensor) -> torch.Tensor:
         # x_lorentz is on Lorentz manifold so let HypLinear handle it directly
-        return self.lin(x_lorentz, x_manifold="hyp")
+        return self.lin(x_lorentz)
 
 
 class LorentzMLPHead(nn.Module):
     def __init__(self, manifold: Lorentz, hidden_dim: int, num_classes: int, decoder_type: str = "linear", bias: bool = True) -> None:
         super().__init__()
-        dim_lorentz = hidden_dim + 1
+        dim_lorentz = hidden_dim
         
         if decoder_type == "cls":
             self.decoder = HyperbolicCLS(
@@ -95,7 +93,7 @@ class Hypformer(nn.Module):
         super().__init__()
         self.attn_mask = attn_mask
         self.alpha = alpha
-
+        self.dropout = nn.Dropout(dropout)
         self.lin_in = nn.Linear(input_dim, hidden_dim)
         self.manifold = Lorentz(k)
 
@@ -105,7 +103,7 @@ class Hypformer(nn.Module):
         ])
 
         self.ffn_layers = nn.ModuleList([
-            LorentzFFN(self.manifold, hidden_dim=hidden_dim, dropout=dropout)
+            LorentzFFN(self.manifold, hidden_dim=hidden_dim)
             for _ in range(num_layers)
         ])
 
@@ -115,38 +113,60 @@ class Hypformer(nn.Module):
             num_classes=num_classes,
             decoder_type=decoder_type,
         )
+    
+    @staticmethod
+    def _minkowski_norm_sq(x: torch.Tensor) -> torch.Tensor:
+        time = x[..., :1]   
+        space = x[..., 1:] 
+        norm_sq = -time * time + torch.sum(space * space, dim=-1, keepdim=True)
+        return norm_sq
+
+    def _is_on_manifold(self, x: torch.Tensor, manifold: Lorentz, tol: float = 1e-4, log_details: bool = False) -> bool:
+        # k_val = manifold.k().item()
+        k_val = 1.0
+        target = -1.0 / k_val
+
+        norm_sq = self._minkowski_norm_sq(x)
+        diff = norm_sq - target
+        max_diff = diff.abs().max().item()
+
+        print(max_diff < tol)
+
+        if log_details:
+            print("[manifold check] k=%.6f", k_val)
+            print("  target Minkowski norm = %.6f", target)
+            print("  max |<x,x>_L - target| = %.6e", max_diff)
+
+        return None
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # hypformer expects unbatched input [N, D]
         if x.dim() != 2:
             raise ValueError(f"Expected x to be [N, D], got {x.shape}")
 
-        # euclidean input projection
+        # euclidean input projection and dropout
         x_space = self.lin_in(x) 
-        x_space = F.normalize(x_space, p=2, dim=-1) * 0.1
+        x_space = self.dropout(x_space)
+        x_space = F.normalize(x_space, p=2, dim=-1) * 1.0
 
-        x_lorentz = None
+        # map to lorentz manifold
+        x_lorentz = self.manifold.expmap0(x_space)
+
         for mha, ffn in zip(self.mha_layers, self.ffn_layers):
-            # mha consumes euclidean coords and outputs lorentz vectors
-            y_lorentz = mha(x_space, attn_mask=self.attn_mask)
+            y_lorentz = mha(x_lorentz, attn_mask=self.attn_mask)
 
             # residual connection
-            if x_lorentz is None:
-                x_lorentz = y_lorentz
-            else:
-                # non-manifold-correct residual (ambient-space hack)
-                x_lorentz = (1.0 - self.alpha) * x_lorentz + self.alpha * y_lorentz
+            x_lorentz = self.manifold.mid_point(
+                torch.stack([x_lorentz, y_lorentz], dim=1)
+            )
 
-            # feedforward network operates in lorentz space
-            y_lorentz = ffn(x_lorentz) 
+            z_lorentz = ffn(x_lorentz) 
 
             # residual connection
-            x_lorentz = (1.0 - self.alpha) * x_lorentz + self.alpha * y_lorentz
+            x_lorentz = self.manifold.mid_point(
+                torch.stack((x_lorentz, z_lorentz), dim=1)
+            )
 
-            # extract space part for next MHA layer as it expects euclidean input
-            x_space = x_lorentz[..., 1:]
-
-        # decode from lorentz space to logits
         logits = self.head(x_lorentz)
 
         return logits

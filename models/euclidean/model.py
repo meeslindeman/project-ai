@@ -89,6 +89,7 @@ class EuclideanModel(nn.Module):
         num_layers: int = 1,
         attn_mask: torch.Tensor | None = None,
         alpha: float = 1.0,
+        dropout: float = 0.0,
         lorentz_map: bool = False
     ) -> None:
         super().__init__()
@@ -97,7 +98,7 @@ class EuclideanModel(nn.Module):
         self.lorentz_map = lorentz_map
 
         self.lin_in = nn.Linear(input_dim, hidden_dim)
-
+        self.dropout = nn.Dropout(dropout)
         self.mha_layers = nn.ModuleList([MHA(input_dim=hidden_dim, num_heads=num_heads) for _ in range(num_layers)])
         self.ffn_layers = nn.ModuleList([FFN(input_dim=hidden_dim, hidden_dim=hidden_dim) for _ in range(num_layers)])
 
@@ -111,9 +112,10 @@ class EuclideanModel(nn.Module):
         elif x.dim() != 3:               
             raise ValueError(f"x must be [N,D] or [B,N,D], got {x.shape}")
         
-        # project to hidden dim and normalize
-        x = self.lin_in(x)                      # [B, N, D]             
-        x = F.normalize(x, p=2, dim=-1) * 0.1                                                    
+        # project to hidden dim and dropout
+        x = self.lin_in(x)                      
+        x = self.dropout(x)
+        x = F.normalize(x, p=2, dim=-1) * 1.0                                                 
 
         for mha, ffn in zip(self.mha_layers, self.ffn_layers):
             y = mha(x, adj_mask=self.attn_mask)                   

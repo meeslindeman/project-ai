@@ -92,12 +92,13 @@ class PersonalModel(nn.Module):
         attn_debug: bool = False,
         attn_mask: torch.Tensor = None,
         a_default: float = 0.0,
-        alpha: float = 1.0
+        alpha: float = 1.0,
+        dropout: float = 0.0
     ) -> None:
         super().__init__()
         self.attn_mask = attn_mask
         self.alpha = alpha
-
+        self.dropout = nn.Dropout(dropout)
         self.lin_in = nn.Linear(input_dim, hidden_dim)
         self.manifold = Lorentz(curvature_k)
 
@@ -166,9 +167,10 @@ class PersonalModel(nn.Module):
         elif x.dim() != 3:               
             raise ValueError(f"x must be [N,D] or [B,N,D], got {x.shape}")
 
-        # euclidean input projection
+        # euclidean input projection and dropout
         x_space = self.lin_in(x)  
-        x_space = F.normalize(x_space, p=2, dim=-1) * 0.1
+        x_space = self.dropout(x_space)
+        x_space = F.normalize(x_space, p=2, dim=-1) * 1.0
 
         # map to lorentz manifold
         x_lorentz = self.manifold.expmap0(x_space)  
@@ -177,18 +179,18 @@ class PersonalModel(nn.Module):
             y_lorentz = mha(x_lorentz, attn_mask=self.attn_mask)
 
             # residual connection
-            if x_lorentz is None:
-                x_lorentz = y_lorentz
-            else:
-                # non-manifold-correct residual (ambient-space hack)
-                x_lorentz = (1.0 - self.alpha) * x_lorentz + self.alpha * y_lorentz
-                # x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
+            x_lorentz = self.manifold.lorentz_residual(
+                x_lorentz, y_lorentz,
+                wx=1.0 - self.alpha, wy=self.alpha
+            )
 
-            y_lorentz = ffn(x_lorentz)
+            z_lorentz = ffn(x_lorentz)
 
-            # x_lorentz = self.manifold.lorentz_residual(x_lorentz, y_lorentz, wx=1.0 - self.alpha, wy=self.alpha)
-
-            x_lorentz = (1.0 - self.alpha) * x_lorentz + self.alpha * y_lorentz
+            # residual connection
+            x_lorentz = self.manifold.lorentz_residual(
+                x_lorentz, z_lorentz,
+                wx=1.0 - self.alpha, wy=self.alpha
+            )
 
         logits = self.head(x_lorentz)
 
