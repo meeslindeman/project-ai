@@ -26,15 +26,18 @@ class HypformerAttention(nn.Module):
         self.use_weight = use_weight
         self.power_k = power_k
 
+        spatial_in = in_channels - 1
+        spatial_out = out_channels - 1
+
         # never actually implemented in orginal code
         self.heads_concat = heads_concat
 
         # each head has its own HypLinear(in -> out)
-        self.Wk = nn.ModuleList([HypLinear(manifold, in_channels, out_channels) for _ in range(num_heads)])
-        self.Wq = nn.ModuleList([HypLinear(manifold, in_channels, out_channels) for _ in range(num_heads)])
+        self.Wk = nn.ModuleList([HypLinear(manifold, spatial_in, spatial_out) for _ in range(num_heads)])
+        self.Wq = nn.ModuleList([HypLinear(manifold, spatial_in, spatial_out) for _ in range(num_heads)])
 
         if use_weight:
-            self.Wv = nn.ModuleList([HypLinear(manifold, in_channels, out_channels) for _ in range(num_heads)])
+            self.Wv = nn.ModuleList([HypLinear(manifold, spatial_in, spatial_out) for _ in range(num_heads)])
         
         if self.att_type == 'full':
             self.scale = nn.Parameter(torch.tensor([math.sqrt(out_channels)]))
@@ -104,16 +107,16 @@ class HypformerAttention(nn.Module):
 
         return (attn_output, attn_output) if output_attn else attn_output
 
-    def forward(self, x_euc: torch.Tensor, attn_mask: torch.Tensor | None = None, output_attn: bool = False):
+    def forward(self, x_lorentz: torch.Tensor, attn_mask: torch.Tensor | None = None, output_attn: bool = False):
         # x_euc: [N,in_channels] in Euclidean space
         q_list, k_list, v_list = [], [], []
         for i in range(self.num_heads):
-            q_list.append(self.Wq[i](x_euc, x_manifold="euc"))
-            k_list.append(self.Wk[i](x_euc, x_manifold="euc"))
+            q_list.append(self.Wq[i](x_lorentz, x_manifold='hyp'))   # manifold input
+            k_list.append(self.Wk[i](x_lorentz, x_manifold='hyp'))
             if self.use_weight:
-                v_list.append(self.Wv[i](x_euc, x_manifold="euc"))
+                v_list.append(self.Wv[i](x_lorentz, x_manifold='hyp'))
             else:
-                v_list.append(x_euc) # dummy, will not be used
+                v_list.append(x_lorentz)
 
         qs = torch.stack(q_list, dim=1)  # [N,H,D_lor]
         ks = torch.stack(k_list, dim=1)
