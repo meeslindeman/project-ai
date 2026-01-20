@@ -1,11 +1,13 @@
+import os
+import pickle as pkl
+import sys
+
+import networkx as nx
 import numpy as np
+import scipy.sparse as sp
 import torch
 import torch.nn.functional as F
-from scipy import sparse as sp  
 
-"""
-Data processing adapted from SGFormer.
-"""
 
 def rand_train_test_idx(label, train_prop=0.5, valid_prop=0.25, ignore_negative=True):
     """Randomly split node indices into train/valid/test."""
@@ -66,6 +68,16 @@ def normalize_feat(mx):
     nonzero = rowsum != 0
     r_inv[nonzero] = 1.0 / rowsum[nonzero]
     return sp.diags(r_inv).dot(mx)
+
+
+def normalize(mx):
+    """Row-normalize (potentially sparse) matrix."""
+    rowsum = np.array(mx.sum(1))
+    r_inv = np.power(rowsum, -1).flatten()
+    r_inv[np.isinf(r_inv)] = 0.0
+    r_mat_inv = sp.diags(r_inv)
+    mx = r_mat_inv.dot(mx)
+    return mx
 
 
 def eval_acc(y_true, y_pred):

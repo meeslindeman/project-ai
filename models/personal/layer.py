@@ -12,17 +12,15 @@ _repo_root = os.path.normpath(_repo_root)
 if _repo_root not in sys.path:
     sys.path.append(_repo_root)
 
-from layers.lorentz_fc import Lorentz_fully_connected
+from layers.LLinear import LorentzFullyConnected
 
-LorentzFC = Lorentz_fully_connected
+LorentzFC = LorentzFullyConnected
 
 class LorentzMLR(nn.Module):
-    """A fully connected layer in the Lorentz model. with identity activation."""
-    # the activation is the identity
-    def __init__(self, in_features: int, out_features: int, k: float = 0.1, reset_params: str = "kaiming", activation: nn.Module = nn.Identity(), input_space: str = "lorentz") -> None:
+    def __init__(self, in_features: int, out_features: int, k: float = 0.1, reset_params: str = "kaiming", a_default: float = 0.0, activation: nn.Module = nn.Identity(), input_space: str = "lorentz") -> None:
         super().__init__()
         self.manifold = Lorentz(k)
-        self.linear = LorentzFC(in_features, out_features, self.manifold, reset_params=reset_params, activation=activation)
+        self.linear = LorentzFC(in_features, out_features, self.manifold, reset_params=reset_params, a_default=a_default, activation=activation)
         self.input_space = input_space
     
     def forward(self, x):

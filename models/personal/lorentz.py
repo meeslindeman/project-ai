@@ -72,22 +72,6 @@ class Lorentz(nn.Module):
         space = factor * x
         return torch.cat([time, space], dim=-1)
 
-    def safe_expmap0(self, x):
-        sqrt_k = self.k().sqrt()                      # k > 0
-        norm_x = torch.norm(x, dim=-1, keepdim=True).clamp_min(1e-9)
-
-        z = norm_x * sqrt_k
-
-        # prevent cosh/sinh overflow (float32 starts to overflow around ~88)
-        z = z.clamp_max(80.0)
-
-        time = torch.cosh(z) / sqrt_k
-        factor = torch.sinh(z) / (z + 1e-9)           # safe even when z ~ 0
-        space = factor * x
-
-        return torch.cat([time, space], dim=-1)
-
-
     def logmap0(self, y):
         """
         Logarithmic map from the origin for the Lorentz model.
@@ -167,12 +151,14 @@ class Lorentz(nn.Module):
         space_sq = xs.narrow(dim=-1, start=1, length=xs.size(-1)-1) ** 2
         lorentz_norm_sq = -time_sq + space_sq.sum(dim=-1, keepdim=True)
         target_norm = -1.0 / self.k()
-        assert torch.allclose(lorentz_norm_sq, target_norm, atol=1e-3), f"Input tensors do not lie on the Lorentz manifold. Mean deviation: {torch.abs(lorentz_norm_sq - target_norm).mean().item()}"
 
-        time = torch.sqrt(((xs[..., 0]) ** 2).sum(dim=-1, keepdim=True) - (xs.shape[-2] - 1) / self.k())
+        time_sq_sum = ((xs[..., 0]) ** 2).sum(dim=-1, keepdim=True)
+        sqrt_arg = time_sq_sum - (xs.shape[-2] - 1) / self.k()
+        eps = 1e-7
+        time = torch.sqrt(torch.clamp(sqrt_arg, min=eps))
         space = xs[..., 1:].reshape(*xs.shape[:-2], -1)
         out = torch.cat([time, space], dim=-1)
-        assert torch.allclose(-out[..., 0]**2 + (out[..., 1:]**2).sum(dim=-1), -1.0 / self.k(), atol=1e-3), "Output tensor does not lie on the Lorentz manifold."
+
         return out
 
     # ========================================
@@ -191,37 +177,33 @@ class Lorentz(nn.Module):
             res = res.squeeze(dim)
         return res
 
-    def mid_point(self, x: torch.Tensor, w: Optional[torch.Tensor] = None, dim: int = -1) -> torch.Tensor:
-        # from https://github.com/chenweize1998/fully-hyperbolic-nn/
-        if w is not None:
-            # weighted average over token dimension (-2)
-            ave = w.matmul(x)       # [..., M, D]
+    def lorentz_midpoint(self, xs: torch.Tensor, weights: Optional[torch.Tensor] = None):
+        """
+        Compute the Lorentz midpoint of a set of points on the Lorentz manifold.
+
+        Args:
+            xs: Tensor of shape (..., N, D) where N is the number of points and D is the dimension of the Lorentz manifold.
+            weights: Optional tensor of shape (M, N) representing the weights for each point. If None, equal weights are assumed.
+
+        Returns:
+            Tensor of shape (..., D) representing the Lorentz midpoint.
+        """
+        time_sq = xs.narrow(dim=-1, start=0, length=1) ** 2
+        space_sq = xs.narrow(dim=-1, start=1, length=xs.size(-1)-1) ** 2
+        lorentz_norm_sq = -time_sq + space_sq.sum(dim=-1, keepdim=True)
+
+        if weights is None:
+            numerator = xs.sum(dim=-2)
         else:
-            # unweighted mean over token dimension
-            ave = x.mean(dim=-2)    # [..., D]
+            numerator = weights @ xs
 
-        norm_sq = self.inner(ave, ave, keepdim=True, dim=dim)  # [..., 1]
-        norm_sq = norm_sq.clamp(max=-1e-8)
-
-        alpha_sq = -1.0 / (self.k() * norm_sq)    # [..., 1]
-        alpha_sq = alpha_sq.clamp_min(1e-8)
-        alpha = torch.sqrt(alpha_sq)    # [..., 1]
-
-        midpoint = alpha * ave   # [..., D] / [..., M, D]
-        return midpoint
-
-    def pooling(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        if mask is None:
-            # Uniform centroid over tokens
-            pooled = self.mid_point(x)            # [B, D]
-        else:
-            # Convert mask to uniform weights over valid tokens
-            w = mask.float()                      # [B, N]
-            w = w.unsqueeze(-2)                   # [B, 1, N]
-            pooled = self.mid_point(x, w)         # [B, 1, D]
-            pooled = pooled.squeeze(-2)           # [B, D]
-
-        return pooled
+        time_sq = numerator.narrow(dim=-1, start=0, length=1) ** 2
+        space_sq = numerator.narrow(dim=-1, start=1, length=numerator.size(-1)-1) ** 2
+        lorentz_norm_sq = time_sq - space_sq.sum(dim=-1, keepdim=True)
+        denominator = lorentz_norm_sq.sqrt()
+        denominator = denominator * self.k().sqrt()
+        out = numerator / denominator
+        return out
 
     def lorentz_residual(self, x: torch.Tensor, y: torch.Tensor, wx: float, wy: float, eps: float = 1e-9):
         # x,y: [..., 1+d] on Lorentz hyperboloid

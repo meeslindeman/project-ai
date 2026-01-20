@@ -11,25 +11,26 @@ class PersonalMHA(nn.Module):
         self,
         manifold: Lorentz,
         hidden_dim: int,
-        curvature_k: float,
+        curvature: float,
         num_heads: int = 1,
         compute_scores: str = "lorentz_inner",
         head_fusion: str = "midpoint",
         split_heads: bool | None = True,
         a_default: float = 0.0,
-        attn_debug: bool = False
+        reset_params: str = "lorentz_kaiming"
     ) -> None:
         super().__init__()
         self.manifold = manifold
         self.attn = LorentzAttention(
-            input_dim=hidden_dim + 1,          # lorentz dim = 1 + spatial dim
-            curvature=curvature_k,
+            input_dim=hidden_dim + 1,          
+            curvature=curvature,
             num_heads=num_heads,
             compute_scores=compute_scores,
             head_fusion=head_fusion,
             split_heads=split_heads,
-            out_dim=hidden_dim,                # produces output in lorentz dim = 1 + spatial dim
-            debug=attn_debug
+            out_dim=hidden_dim,               
+            reset_params=reset_params,
+            a_default=a_default
         )
 
     def forward(self, x_lorentz: torch.Tensor, attn_mask: torch.Tensor | None = None) -> torch.Tensor:
@@ -37,47 +38,38 @@ class PersonalMHA(nn.Module):
 
 
 class PersonalFFN(nn.Module):
-    def __init__(self, hidden_dim: int, manifold: Lorentz, reset_params: str = "kaiming", a_default: float = 0.0, activation=nn.Identity()) -> None:
+    def __init__(self, hidden_dim: int, manifold: Lorentz, curvature: float, reset_params: str = "lorentz_kaiming", a_default: float = 0.0) -> None:
         super().__init__()
-        self.lin = LorentzFC(
-            in_features=hidden_dim,    # space features only
-            out_features=hidden_dim,   
+        self.fc = LorentzFC(
+            in_features=hidden_dim + 1, # lorentz dim   
+            out_features=hidden_dim + 1, # lorentz dim   
             manifold=manifold,
             reset_params=reset_params,
             a_default=a_default,
-            activation=activation,
             do_mlr=False
         )
 
     def forward(self, x_lorentz: torch.Tensor) -> torch.Tensor:
-        # returns a Lorentz vector
-        return self.lin(x_lorentz)
+        return self.fc(x_lorentz)
 
 
 class PersonalMLPHead(nn.Module):
-    def __init__(self, hidden_dim: int, num_classes: int, curvature_k: float, reset_params: str = "kaiming") -> None:
+    def __init__(self, hidden_dim: int, manifold: Lorentz, num_classes: int, curvature: float, reset_params: str = "lorentz_kaiming", a_default: float = 0.0) -> None:
         super().__init__()
-        self.mlr = LorentzMLR(
-            in_features=hidden_dim,
-            out_features=num_classes,
-            k=curvature_k,
+        self.fc = LorentzFC(
+            in_features=hidden_dim + 1, # lorentz dim
+            out_features=num_classes + 1, # lorentz dim
+            manifold=manifold,
             reset_params=reset_params,
-            activation=nn.Identity(),   
-            input_space="lorentz"
+            a_default=a_default,
+            do_mlr=True
         )
 
     def forward(self, x_lorentz: torch.Tensor) -> torch.Tensor:
-        return self.mlr(x_lorentz)
+        return self.fc(x_lorentz)
 
 
 class PersonalModel(nn.Module):
-    """
-    Convention for personal model:
-      - After expmap0, everything is Lorentz vectors of dim (hidden_dim+1).
-      - MHA takes Lorentz vectors and returns Lorentz vectors.
-      - FFN takes Lorentz vectors and returns Lorentz vectors.
-      - Head consumes Lorentz vectors and returns Euclidean logits.
-    """
     def __init__(
         self,
         input_dim: int,
@@ -88,31 +80,35 @@ class PersonalModel(nn.Module):
         compute_scores: str = "lorentz_inner",
         head_fusion: str = "midpoint",
         split_heads: bool | None = True,
-        curvature_k: float = 0.1,
-        attn_debug: bool = False,
+        curvature: float = 1.0,
         attn_mask: torch.Tensor = None,
         a_default: float = 0.0,
-        alpha: float = 1.0,
-        dropout: float = 0.0
+        reset_params: str = "lorentz_kaiming",
+        dropout: float = 0.0,
+        use_ffn: bool = False,
+        train_curvature: bool = False
     ) -> None:
         super().__init__()
         self.attn_mask = attn_mask
-        self.alpha = alpha
+        self.use_ffn = use_ffn
         self.dropout = nn.Dropout(dropout)
+        self.train_curvature = train_curvature
+        
+        self.manifold = Lorentz(curvature)
+
         self.lin_in = nn.Linear(input_dim, hidden_dim)
-        self.manifold = Lorentz(curvature_k)
 
         self.mha_layers = nn.ModuleList([
             PersonalMHA(
                 hidden_dim=hidden_dim,
                 manifold=self.manifold,
-                curvature_k=curvature_k,
+                curvature=curvature,
                 num_heads=num_heads,
                 compute_scores=compute_scores,
                 head_fusion=head_fusion,
                 split_heads=split_heads,
                 a_default=a_default,
-                attn_debug=attn_debug
+                reset_params=reset_params
             )
             for _ in range(num_layers)
         ])
@@ -121,18 +117,20 @@ class PersonalModel(nn.Module):
             PersonalFFN(
                 hidden_dim=hidden_dim,
                 manifold=self.manifold,
-                reset_params="kaiming",
-                a_default=a_default,
-                activation=nn.Identity() 
+                curvature=curvature,
+                reset_params=reset_params,
+                a_default=a_default
             )
             for _ in range(num_layers)
         ])
 
         self.head = PersonalMLPHead(
             hidden_dim=hidden_dim,
+            manifold=self.manifold,
             num_classes=num_classes,
-            curvature_k=curvature_k,
-            reset_params="kaiming"
+            curvature=curvature,
+            reset_params=reset_params,
+            a_default=a_default
         )
 
     @staticmethod
@@ -167,30 +165,20 @@ class PersonalModel(nn.Module):
         elif x.dim() != 3:               
             raise ValueError(f"x must be [N,D] or [B,N,D], got {x.shape}")
 
-        # euclidean input projection and dropout
+        # project to hidden dim and dropout
         x_space = self.lin_in(x)  
         x_space = self.dropout(x_space)
         x_space = F.normalize(x_space, p=2, dim=-1) * 1.0
 
-        # map to lorentz manifold
+        # map to Lorentz manifold
         x_lorentz = self.manifold.expmap0(x_space)  
 
         for mha, ffn in zip(self.mha_layers, self.ffn_layers):
-            y_lorentz = mha(x_lorentz, attn_mask=self.attn_mask)
 
-            # residual connection
-            x_lorentz = self.manifold.lorentz_residual(
-                x_lorentz, y_lorentz,
-                wx=1.0 - self.alpha, wy=self.alpha
-            )
+            x_lorentz = mha(x_lorentz, attn_mask=self.attn_mask)
 
-            z_lorentz = ffn(x_lorentz)
-
-            # residual connection
-            x_lorentz = self.manifold.lorentz_residual(
-                x_lorentz, z_lorentz,
-                wx=1.0 - self.alpha, wy=self.alpha
-            )
+            if self.use_ffn:
+                x_lorentz = ffn(x_lorentz)
 
         logits = self.head(x_lorentz)
 
