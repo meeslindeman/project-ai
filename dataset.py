@@ -8,10 +8,6 @@ import torch
 
 from data_utils import normalize_feat, rand_train_test_idx
 
-"""
-Data processing adapted from SGFormer.
-"""
-
 DATAPATH = "data/"
 
 class NCDataset(object):
@@ -44,8 +40,8 @@ class NCDataset(object):
 
 def load_nc_dataset(args):
     """
-    args.dataset: 'chameleon' | 'squirrel' | 'film' (Actor)
-    args.no_feat_norm: bool
+    args.dataset: 'chameleon' | 'squirrel' | 'film' (Actor) | 'airport' | 'disease_nc'
+    args.no_feat_norm: bool (for chameleon/squirrel)
     """
     global DATAPATH
     DATAPATH = getattr(args, "data_dir", "data/")

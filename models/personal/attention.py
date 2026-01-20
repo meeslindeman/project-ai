@@ -20,8 +20,8 @@ class LorentzAttention(nn.Module):
             head_fusion: str = "midpoint",
             split_heads: bool | None = True,
             out_dim: int | None = None,
+            reset_params: str = "lorentz_kaiming",
             a_default: float = 0.0,
-            debug: bool = False,
             attn_mask: torch.Tensor | None = None
         ) -> None:
         super().__init__()
@@ -31,14 +31,9 @@ class LorentzAttention(nn.Module):
         self.num_heads = num_heads
         self.compute_scores = compute_scores
         self.head_fusion = head_fusion
-        self.debug = debug
         self.attn_mask = attn_mask 
 
         self.manifold = Lorentz(curvature)
-
-        valid_fusions = ("midpoint", "concat_direct", "concat_logradius")
-        if head_fusion not in valid_fusions:
-            raise ValueError(f"Unknown head_fusion: {head_fusion}. Must be one of {valid_fusions}")
 
         if split_heads is None:
             split_heads = (head_fusion != "midpoint")  # midpoint => HypFormer-style full-dim heads
@@ -61,15 +56,30 @@ class LorentzAttention(nn.Module):
         self.scale = 1.0 / math.sqrt(self.head_spatial_dim)
 
         self.W_q = nn.ModuleList([
-            LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold)
+            LorentzFC(
+                in_features=self.lorentz_dim, 
+                out_features=self.head_lorentz_dim, 
+                manifold=self.manifold, 
+                reset_params="lorentz_kaiming", 
+                a_default=a_default)
             for _ in range(self.num_heads)
         ])
         self.W_k = nn.ModuleList([
-            LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold)
+            LorentzFC(
+                in_features=self.lorentz_dim, 
+                out_features=self.head_lorentz_dim,
+                manifold=self.manifold, 
+                reset_params="lorentz_kaiming", 
+                a_default=a_default)
             for _ in range(self.num_heads)
         ])
         self.W_v = nn.ModuleList([
-            LorentzFC(self.spatial_dim, self.head_spatial_dim, manifold=self.manifold)
+            LorentzFC(
+                in_features=self.lorentz_dim, 
+                out_features=self.head_lorentz_dim, 
+                manifold=self.manifold, 
+                reset_params="lorentz_kaiming", 
+                a_default=a_default)
             for _ in range(self.num_heads)
         ])
 
@@ -85,8 +95,15 @@ class LorentzAttention(nn.Module):
         if out_dim is None:
             out_dim = self.spatial_dim
         self.out_dim = out_dim
-        self.W_o = LorentzFC(in_spatial_out, self.out_dim, manifold=self.manifold)
 
+        self.W_o = LorentzFC(
+            in_features=in_spatial_out + 1, 
+            out_features=self.out_dim + 1, 
+            manifold=self.manifold, 
+            reset_params="lorentz_kaiming",
+            a_default=a_default
+        ) 
+        
         if self.head_fusion == "concat_logradius":
             n = self.spatial_dim            
             ni = self.head_spatial_dim
@@ -184,36 +201,11 @@ class LorentzAttention(nn.Module):
         B, N, D = x.shape
         assert D == self.lorentz_dim, f"Expected last dim {self.lorentz_dim}, got {D}"
 
-        if self.debug:
-            logger.debug("====== LorentzAttention forward ======")
-            logger.debug(
-                "Input: on_manifold=%s | has_nans=%s",
-                self._is_on_manifold(x, self.manifold, log_details=False),
-                bool(torch.isnan(x).any()),
-            )
-
         # project to per-head dimensions: [B, N, 1+spatial_dim] -> [B, N, 1+head_spatial_dim] per head
         q = torch.stack([self.W_q[h](x) for h in range(self.num_heads)], dim=1)  # [B, H, N, 1+head_spatial_dim]
         k = torch.stack([self.W_k[h](x) for h in range(self.num_heads)], dim=1)  # [B, H, N, 1+head_spatial_dim]
         v = torch.stack([self.W_v[h](x) for h in range(self.num_heads)], dim=1)  # [B, H, N, 1+head_spatial_dim]
         
-        if self.debug:
-            logger.debug(
-                "Q: on_manifold=%s | has_nans=%s",
-                self._is_on_manifold(q, self.manifold, log_details=False),
-                bool(torch.isnan(q).any()),
-            )
-            logger.debug(
-                "K: on_manifold=%s | has_nans=%s",
-                self._is_on_manifold(k, self.manifold, log_details=False),
-                bool(torch.isnan(k).any()),
-            )
-            logger.debug(
-                "V: on_manifold=%s | has_nans=%s",
-                self._is_on_manifold(v, self.manifold, log_details=False),
-                bool(torch.isnan(v).any()),
-            )
-
         if self.compute_scores == "lorentz_inner":
             scores = self._lorentz_inner(q, k) * self.scale   # [B, H, N, N]
         elif self.compute_scores == "signed_dist":
@@ -222,14 +214,6 @@ class LorentzAttention(nn.Module):
         else:
             raise ValueError(f"Unknown compute_scores mode: {self.compute_scores}")
         
-        if self.debug:
-            logger.debug(
-                "Scores: has_nans=%s | min=%.3e | max=%.3e",
-                bool(torch.isnan(scores).any()),
-                scores.min().item(),
-                scores.max().item(),
-            )
-
         if attn_mask is not None:
             if attn_mask.dim() == 2:
                 m = attn_mask[None, None, :, :]      # [N, N] -> [1, 1, N, N]
@@ -241,31 +225,16 @@ class LorentzAttention(nn.Module):
 
         attn = F.softmax(scores, dim=-1)  # [B, H, N, N]
 
-        if self.debug:
-            logger.debug(
-                "Attn: has_nans=%s | min=%.3e | max=%.3e",
-                bool(torch.isnan(attn).any()),
-                attn.min().item(),
-                attn.max().item(),
-            )
-
         # weighted aggregation: [B, H, N, 1+head_spatial_dim] with weights [B, H, N, N]
         # mid_point computes: weighted_sum = attn @ v, then projects to manifold
-        out = self.manifold.mid_point(v, attn)  # [B, H, N, 1+head_spatial_dim]
+        out = self.manifold.lorentz_midpoint(v, attn)  # [B, H, N, 1+head_spatial_dim]
         
-        if self.debug:
-            logger.debug(
-                "Attn output: on_manifold=%s | has_nans=%s",
-                self._is_on_manifold(out, self.manifold, log_details=False),
-                bool(torch.isnan(out).any()),
-            )
-                    
         # fuse multiple heads
         if self.num_heads > 1:
             if self.head_fusion == "midpoint":
                 B, H, N, D_lorentz = out.shape
                 out = out.permute(0, 2, 1, 3).contiguous().view(B * N, H, D_lorentz) # [B, N, H, D_lorentz] -> [B*N, H, D_lorentz]
-                out = self.manifold.mid_point(out).view(B, N, D_lorentz) # [B, N, D_lorentz] -> [B, N, 1+spatial_dim]
+                out = self.manifold.lorentz_midpoint(out).view(B, N, D_lorentz) # [B, N, D_lorentz] -> [B, N, 1+spatial_dim]
             elif self.head_fusion == "concat_direct":
                 out = self._concat_heads_direct(out)  # [B, H, N, 1+head_spatial_dim] -> [B, N, 1+spatial_dim]
             elif self.head_fusion == "concat_logradius":
@@ -273,23 +242,8 @@ class LorentzAttention(nn.Module):
         else:
             out = out.squeeze(1)  # [B, 1, N, 1+head_spatial_dim] -> [B, N, 1+head_spatial_dim]
 
-        if self.debug:
-            logger.debug(
-                "After heads concat: on_manifold=%s | has_nans=%s",
-                self._is_on_manifold(out, self.manifold, log_details=False),
-                bool(torch.isnan(out).any()),
-            )
-
         # output projection: [B, N, 1+spatial_dim] -> [B, N, 1+out_dim]
         out = self.W_o(out) 
         
-        if self.debug:
-            logger.debug(
-                "Final output: on_manifold=%s | has_nans=%s",
-                self._is_on_manifold(out, self.manifold, log_details=False),
-                bool(torch.isnan(out).any()),
-            )
-            logger.debug("=======================================")
-            
         return out 
     

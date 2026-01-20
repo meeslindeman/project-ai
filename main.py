@@ -7,9 +7,9 @@ import torch.nn.functional as F
 
 from dataset import load_nc_dataset
 from data_utils import load_fixed_splits, eval_acc
-# from hypll.optim import RiemannianAdam
-from geoopt.optim.radam import RiemannianAdam
-from geoopt.optim.rsgd import RiemannianSGD
+from hypll.optim import RiemannianAdam, RiemannianSGD
+# from geoopt.optim.radam import RiemannianAdam
+# from geoopt.optim.rsgd import RiemannianSGD
 
 
 def set_seed(seed: int) -> None:
@@ -51,8 +51,6 @@ def train_one_split(args):
 
     # fixed splits for chameleon/squirrel/film
     name = args.dataset
-    if name == "actor":
-        name = "film"
     splits = load_fixed_splits(dataset, name=name, protocol=None)
     split_idx = splits[args.split]
 
@@ -86,10 +84,13 @@ def train_one_split(args):
             compute_scores=args.compute_scores,
             head_fusion=args.head_fusion,
             split_heads=args.split_heads,
-            curvature_k=args.curvature,
-            attn_debug=args.attn_debug,
+            curvature=args.curvature,
+            reset_params=args.reset_params,
+            a_default=args.a_default,
             attn_mask=attn_mask,
-            alpha=args.alpha
+            dropout=args.dropout,
+            use_ffn=args.use_ffn,
+            train_curvature=args.train_curvature
         ).to(device)
 
     elif args.model == "hypformer":
@@ -104,8 +105,9 @@ def train_one_split(args):
             num_heads=args.num_heads,
             k=args.curvature,
             attn_mask=attn_mask,
-            alpha=args.alpha,
-            dropout=args.dropout
+            dropout=args.dropout,
+            use_ffn=args.use_ffn,
+            train_curvature=args.train_curvature
         ).to(device)
 
     elif args.model == "euclidean":
@@ -117,8 +119,9 @@ def train_one_split(args):
             num_heads=args.num_heads,
             num_layers=args.num_layers,
             attn_mask=attn_mask,
-            alpha=args.alpha,
-            lorentz_map=args.lorentz_map
+            dropout=args.dropout,
+            lorentz_map=args.lorentz_map,
+            use_ffn=args.use_ffn
         ).to(device)
 
     if args.precision:
@@ -127,14 +130,12 @@ def train_one_split(args):
 
     if args.optimizer == "Adam":
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    elif args.optimizer == "AdamW":
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     elif args.optimizer == "RiemannianAdam":
-        if RiemannianAdam is None:
-            raise RuntimeError("hypll.optim.RiemannianAdam not available in this environment.")
-        optimizer = RiemannianAdam(model.parameters(), lr=args.lr, weight_decay=args.wd, stabilize=args.stabilize)
+        optimizer = RiemannianAdam(model.parameters(), lr=args.lr, weight_decay=args.wd)
     elif args.optimizer == "RiemannianSGD":
-        if RiemannianSGD is None:
-            raise RuntimeError("geoopt.optim.rsgd.RiemannianSGD not available in this environment.")
-        optimizer = RiemannianSGD(model.parameters(), lr=args.lr, weight_decay=args.wd, stabilize=args.stabilize)
+        optimizer = RiemannianSGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
@@ -218,7 +219,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Node classification (heterophily)")
 
     # dataset
-    parser.add_argument("--dataset", type=str, default="chameleon", choices=["chameleon", "squirrel", "actor"])
+    parser.add_argument("--dataset", type=str, default="chameleon", choices=["chameleon", "squirrel", "actor", "airport", "disease"])
     parser.add_argument("--no_feat_norm", action="store_true")
 
     # run control
@@ -231,25 +232,27 @@ if __name__ == "__main__":
     # model selection 
     parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer", "euclidean", "euclidean_map"])
     parser.add_argument("--lorentz_map", action="store_true", help="Use Lorentz mapping for final classification layer (euclidean)")
+    parser.add_argument("--use_ffn", action="store_true", help="Use FFN after each MHA layer")
 
     # shared hparams
     parser.add_argument("--hidden_dim", type=int, default=64)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=1)
-    parser.add_argument("--alpha", type=float, default=0.5, help="Residual connection weight")
     parser.add_argument("--dropout", type=float, default=0.0, help="Dropout rate on input features")
     parser.add_argument("--curvature", type=float, default=0.1)
     parser.add_argument("--precision", action="store_true")
+    parser.add_argument("--train_curvature", action="store_true")
 
     # personal attention options
     parser.add_argument("--attn_scope", type=str, default="global", choices=["global", "adjs"])
     parser.add_argument("--compute_scores", type=str, default="lorentz_inner", choices=["lorentz_inner", "signed_dist"])
     parser.add_argument("--head_fusion", type=str, default="midpoint", choices=["midpoint", "concat_direct", "concat_logradius"])
     parser.add_argument("--split_heads", action="store_true", help="(personal) Split hidden dim across heads (D//H per head). Only for manual use; by default inferred from head_fusion.")
-    parser.add_argument("--attn_debug", action="store_true")
+    parser.add_argument("--reset_params", type=str, default="lorentz_kaiming", choices=["lorentz_kaiming", "kaiming"])
+    parser.add_argument("--a_default", type=float, default=0.0)
 
     # optimizer
-    parser.add_argument("--optimizer", type=str, default="RiemannianAdam", choices=["Adam", "RiemannianAdam", "RiemannianSGD"])
+    parser.add_argument("--optimizer", type=str, default="RiemannianAdam", choices=["Adam", "AdamW", "RiemannianAdam", "RiemannianSGD"])
     parser.add_argument("--lr", type=float, default=5e-3)
     parser.add_argument("--wd", type=float, default=0.001)
     parser.add_argument("--stabilize", type=int, default=50, help="Stabilize parameters every n steps if they drift off-manifold")

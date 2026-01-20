@@ -70,12 +70,6 @@ class LorentzMLPHead(nn.Module):
 
 
 class Hypformer(nn.Module):
-    """
-    Convention (driven by the HypformerAttention/HypLinear implementation):
-      - MHA consumes Euclidean spatial features (hidden_dim)
-      - MHA outputs Lorentz vectors (hidden_dim+1)
-      - Next layer's MHA must receive spatial part only: x_lor[..., 1:]
-    """
     def __init__(
         self, 
         input_dim: int, 
@@ -87,12 +81,12 @@ class Hypformer(nn.Module):
         decoder_type: str = "linear", 
         k: float = 1.0,
         attn_mask: torch.Tensor = None,
-        alpha: float = 1.0,
-        dropout: float = 0.0
+        dropout: float = 0.0,
+        use_ffn: bool = False
     ) -> None:
         super().__init__()
         self.attn_mask = attn_mask
-        self.alpha = alpha
+        self.use_ffn = use_ffn
         self.dropout = nn.Dropout(dropout)
         self.lin_in = nn.Linear(input_dim, hidden_dim)
         self.manifold = Lorentz(k)
@@ -153,19 +147,10 @@ class Hypformer(nn.Module):
         x_lorentz = self.manifold.expmap0(x_space)
 
         for mha, ffn in zip(self.mha_layers, self.ffn_layers):
-            y_lorentz = mha(x_lorentz, attn_mask=self.attn_mask)
+            x_lorentz = mha(x_lorentz, attn_mask=self.attn_mask)
 
-            # residual connection
-            x_lorentz = self.manifold.mid_point(
-                torch.stack([x_lorentz, y_lorentz], dim=1)
-            )
-
-            z_lorentz = ffn(x_lorentz) 
-
-            # residual connection
-            x_lorentz = self.manifold.mid_point(
-                torch.stack((x_lorentz, z_lorentz), dim=1)
-            )
+            if self.use_ffn:
+                x_lorentz = ffn(x_lorentz)
 
         logits = self.head(x_lorentz)
 

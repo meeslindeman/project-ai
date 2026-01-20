@@ -3,7 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.personal.layer import LorentzMLR
+from models.personal.layer import LorentzFC
+from models.personal.lorentz import Lorentz
 
 class MHA(nn.Module):
     def __init__(self, input_dim: int, num_heads: int = 1, bias: bool = False) -> None:
@@ -69,12 +70,22 @@ class MLPHead(nn.Module):
         super().__init__()
         self.lin = nn.Linear(hidden_dim, num_classes, bias=bias)
         self.lorentz_map = lorentz_map
-        
+
+        self.manifold = Lorentz(1.0)
+
         if lorentz_map:
-            self.lorentz_fc = LorentzMLR(hidden_dim, num_classes, input_space="euclidean")
+            self.lorentz_fc = LorentzFC(
+                in_features=hidden_dim + 1, # lorentz dim
+                out_features=num_classes + 1, # lorentz dim
+                manifold=self.manifold,
+                reset_params="kaiming",
+                a_default=0.0,
+                do_mlr=True
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.lorentz_map:
+            x = self.manifold.expmap0(x)
             return self.lorentz_fc(x)
         return self.lin(x)
 
@@ -88,13 +99,13 @@ class EuclideanModel(nn.Module):
         num_heads: int = 1,
         num_layers: int = 1,
         attn_mask: torch.Tensor | None = None,
-        alpha: float = 1.0,
         dropout: float = 0.0,
-        lorentz_map: bool = False
+        lorentz_map: bool = False,
+        use_ffn: bool = False
     ) -> None:
         super().__init__()
         self.attn_mask = attn_mask
-        self.alpha = alpha
+        self.use_ffn = use_ffn
         self.lorentz_map = lorentz_map
 
         self.lin_in = nn.Linear(input_dim, hidden_dim)
@@ -118,15 +129,10 @@ class EuclideanModel(nn.Module):
         x = F.normalize(x, p=2, dim=-1) * 1.0                                                 
 
         for mha, ffn in zip(self.mha_layers, self.ffn_layers):
-            y = mha(x, adj_mask=self.attn_mask)                   
+            x = mha(x, adj_mask=self.attn_mask)                   
 
-            # residual connection
-            x = (1.0 - self.alpha) * x + self.alpha * y
-
-            y = ffn(x)
-
-            # residual connection
-            x = (1.0 - self.alpha) * x + self.alpha * y
+            if self.use_ffn:
+                x = ffn(x)
 
         # per node logits
         logits = self.head(x)                   # [B, N, C]   
