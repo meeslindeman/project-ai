@@ -8,3 +8,5 @@ wandb/
 external/
 results/
 benchmark/
+logs/
+metrics/

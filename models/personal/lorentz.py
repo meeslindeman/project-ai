@@ -4,11 +4,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+def inv_softplus(x: torch.Tensor) -> torch.Tensor:
+    return torch.log(torch.expm1(x))
 
 
 class Lorentz(nn.Module):
@@ -19,13 +22,14 @@ class Lorentz(nn.Module):
 
     def __init__(
         self,
-        k: float = 0.1,
+        k: Union[float, torch.Tensor] = 0.1,
         requires_grad: bool = False,
         constraining_strategy: nn.Module = nn.Identity(),
         max_norm: Optional[float] = None,
         safe: bool = True,
         exp_max_norm: float = 1.5,
-        eps: float = 1e-8
+        eps: float = 1e-8,
+        k_min: float = 0.1
     ):
         super().__init__()
         k_value = torch.log(torch.exp(torch.tensor(k)) - 1)
@@ -36,10 +40,27 @@ class Lorentz(nn.Module):
         self.safe = safe
         self.exp_max_norm = exp_max_norm
         self.eps = eps
+        self.k_min = k_min
+
+        if not torch.is_tensor(k):
+            k = torch.tensor(float(k))
+        k = k.clamp_min(k_min)
+
+        raw = inv_softplus(k - k_min)
+        self.c_softplus_inv = nn.Parameter(raw)
+        self.c_softplus_inv.requires_grad_(requires_grad)
 
     def k(self):
         """Returns the negative curvature of the Lorentz model."""
-        return F.softplus(self.c_softplus_inv)
+        return F.softplus(self.c_softplus_inv) + self.k_min
+
+    def set_k(self, k_new: Union[float, torch.Tensor]) -> None:
+        # Optional helper if you ever want to override curvature (e.g. loading from config)
+        if not torch.is_tensor(k_new):
+            k_new = torch.tensor(float(k_new), device=self.c_softplus_inv.device, dtype=self.c_softplus_inv.dtype)
+        k_new = k_new.to(device=self.c_softplus_inv.device, dtype=self.c_softplus_inv.dtype).clamp_min(self.k_min)
+        with torch.no_grad():
+            self.c_softplus_inv.copy_(inv_softplus(k_new - self.k_min))
 
     def forward(self, x):
         return self.expmap0(x)
@@ -57,7 +78,7 @@ class Lorentz(nn.Module):
         to the Lorentz hyperboloid H^n_k.
         Handles the case where the input vector norm is zero.
         """
-        sqrt_k = self.k() ** 0.5
+        sqrt_k = self.k().sqrt()
         norm_x = torch.norm(x, dim=-1, keepdim=True)
 
         eps = 1e-9

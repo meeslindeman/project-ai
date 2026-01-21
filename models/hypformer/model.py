@@ -82,7 +82,8 @@ class Hypformer(nn.Module):
         k: float = 1.0,
         attn_mask: torch.Tensor = None,
         dropout: float = 0.0,
-        use_ffn: bool = False
+        use_ffn: bool = False,
+        train_curvature: bool = False
     ) -> None:
         super().__init__()
         self.attn_mask = attn_mask

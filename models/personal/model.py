@@ -92,9 +92,8 @@ class PersonalModel(nn.Module):
         self.attn_mask = attn_mask
         self.use_ffn = use_ffn
         self.dropout = nn.Dropout(dropout)
-        self.train_curvature = train_curvature
-        
-        self.manifold = Lorentz(curvature)
+
+        self.manifold = Lorentz(k=curvature, requires_grad=train_curvature)
 
         self.lin_in = nn.Linear(input_dim, hidden_dim)
 
