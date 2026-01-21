@@ -7,9 +7,9 @@ import torch.nn.functional as F
 
 from dataset import load_nc_dataset
 from data_utils import load_fixed_splits, eval_acc
-from hypll.optim import RiemannianAdam, RiemannianSGD
-# from geoopt.optim.radam import RiemannianAdam
-# from geoopt.optim.rsgd import RiemannianSGD
+# from hypll.optim import RiemannianAdam, RiemannianSGD
+from geoopt.optim.radam import RiemannianAdam
+from geoopt.optim.rsgd import RiemannianSGD
 
 
 def set_seed(seed: int) -> None:
@@ -51,6 +51,8 @@ def train_one_split(args):
 
     # fixed splits for chameleon/squirrel/film
     name = args.dataset
+    if args.dataset == "actor":
+        name = "film"
     splits = load_fixed_splits(dataset, name=name, protocol=None)
     split_idx = splits[args.split]
 
@@ -163,6 +165,7 @@ def train_one_split(args):
             break
 
         loss.backward()
+
         optimizer.step()
 
         train_acc, val_acc, test_acc = evaluate_split(model, dataset, split_idx, device)
@@ -171,6 +174,10 @@ def train_one_split(args):
             best_val = val_acc
             best_test = test_acc
             best_epoch = epoch
+            if args.train_curvature:
+                best_curvature = model.manifold.k().item()
+            else:
+                best_curvature = None
             bad = 0
         else:
             bad += 1
@@ -197,6 +204,8 @@ def train_one_split(args):
             break
 
     print(f"Best val {best_val:.4f} at epoch {best_epoch}; corresponding test {best_test:.4f}")
+    if args.train_curvature:
+        print(f"Best curvature {best_curvature:.4f}")
     return best_test
 
 
