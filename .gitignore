@@ -1,6 +1,5 @@
 __pycache__/
 tutorial/
-data/
 *.job
 *.yaml
 output/
@@ -10,3 +9,5 @@ results/
 benchmark/
 logs/
 metrics/
+sweeps/
+jobs/
