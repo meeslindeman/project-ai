@@ -6,8 +6,7 @@ import wandb
 import torch.nn.functional as F
 
 from dataset import load_nc_dataset
-from data_utils import load_fixed_splits, eval_acc
-# from hypll.optim import RiemannianAdam, RiemannianSGD
+from data_utils import eval_acc, get_dataset_split
 from geoopt.optim.radam import RiemannianAdam
 from geoopt.optim.rsgd import RiemannianSGD
 
@@ -47,16 +46,13 @@ def train_one_split(args):
     device = get_device()
     print(f"Device: {device} | Using model: {args.model}")
 
+    # Load dataset (works for both heterophilous and homophilous)
     dataset = load_nc_dataset(args)
 
-    # fixed splits for chameleon/squirrel/film
-    name = args.dataset
-    if args.dataset == "actor":
-        name = "film"
-    splits = load_fixed_splits(dataset, name=name, protocol=None)
-    split_idx = splits[args.split]
+    # Get appropriate splits based on dataset type
+    split_idx = get_dataset_split(dataset, args)
 
-    # move tensors to device
+    # Move tensors to device
     dataset.graph["node_feat"] = dataset.graph["node_feat"].to(device)
     dataset.graph["edge_index"] = dataset.graph["edge_index"].to(device)
     dataset.label = dataset.label.to(device)
@@ -146,7 +142,7 @@ def train_one_split(args):
     best_epoch = -1
     bad = 0
 
-    print(f"Starting training with args: {args}")
+    print(f"Starting training for {args.dataset} (split {args.split})")
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -165,7 +161,6 @@ def train_one_split(args):
             break
 
         loss.backward()
-
         optimizer.step()
 
         train_acc, val_acc, test_acc = evaluate_split(model, dataset, split_idx, device)
@@ -215,7 +210,7 @@ def main(args):
             project=args.wandb_project,
             entity=args.wandb_entity,
             group=args.wandb_group,
-            name=f"{args.model}_num_heads={args.num_heads}_lr={args.lr}_head_fusion={args.head_fusion}",
+            name=f"{args.dataset}_{args.model}_h={args.num_heads}_lr={args.lr}",
             config=vars(args)
         )
         for k, v in wandb.config.items():
@@ -225,52 +220,56 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("Node classification (heterophily)")
+    parser = argparse.ArgumentParser("Node classification with hyperbolic models")
 
-    # dataset
-    parser.add_argument("--dataset", type=str, default="chameleon", choices=["chameleon", "squirrel", "actor", "airport", "disease"])
-    parser.add_argument("--no_feat_norm", action="store_true")
+    # Dataset selection
+    parser.add_argument("--dataset", type=str, default="chameleon", 
+                       choices=["chameleon", "squirrel", "actor", "airport", "disease"])
+    
+    # Dataset-specific args
+    parser.add_argument("--no_feat_norm", action="store_true", help="Don't normalize features (chameleon/squirrel)")
+    parser.add_argument("--normalize_feats", action="store_true", default=True, help="Normalize features (airport/disease)")
+    parser.add_argument("--use_feats", action="store_true", default=True, help="Use node features (disease)")
 
-    # run control
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--split", type=int, default=0, help="0..9 for fixed splits")
+    # Run control
+    parser.add_argument("--seed", type=int, default=42, help="Base random seed")
+    parser.add_argument("--split", type=int, default=0, help="Split index 0-9. Heterophilous: uses pre-defined splits. Homophilous: generates deterministic random split")
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--patience", type=int, default=100)
     parser.add_argument("--log_every", type=int, default=10)
 
-    # model selection 
-    parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer", "euclidean", "euclidean_map"])
+    # Model selection 
+    parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer", "euclidean"])
     parser.add_argument("--lorentz_map", action="store_true", help="Use Lorentz mapping for final classification layer (euclidean)")
     parser.add_argument("--use_ffn", action="store_true", help="Use FFN after each MHA layer")
 
-    # shared hparams
+    # Shared hyperparameters
     parser.add_argument("--hidden_dim", type=int, default=64)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--num_heads", type=int, default=1)
     parser.add_argument("--dropout", type=float, default=0.0, help="Dropout rate on input features")
-    parser.add_argument("--curvature", type=float, default=0.1)
+    parser.add_argument("--curvature", type=float, default=1.0)
     parser.add_argument("--precision", action="store_true")
     parser.add_argument("--train_curvature", action="store_true")
 
-    # personal attention options
+    # Personal attention options
     parser.add_argument("--attn_scope", type=str, default="global", choices=["global", "adjs"])
     parser.add_argument("--compute_scores", type=str, default="lorentz_inner", choices=["lorentz_inner", "signed_dist"])
     parser.add_argument("--head_fusion", type=str, default="midpoint", choices=["midpoint", "concat_direct", "concat_logradius"])
-    parser.add_argument("--split_heads", action="store_true", help="(personal) Split hidden dim across heads (D//H per head). Only for manual use; by default inferred from head_fusion.")
+    parser.add_argument("--split_heads", action="store_true", help="Split hidden dim across heads (D//H per head)")
     parser.add_argument("--reset_params", type=str, default="lorentz_kaiming", choices=["lorentz_kaiming", "kaiming"])
     parser.add_argument("--a_default", type=float, default=0.0)
 
-    # optimizer
+    # Optimizer
     parser.add_argument("--optimizer", type=str, default="RiemannianAdam", choices=["Adam", "AdamW", "RiemannianAdam", "RiemannianSGD"])
     parser.add_argument("--lr", type=float, default=5e-3)
     parser.add_argument("--wd", type=float, default=0.001)
-    parser.add_argument("--stabilize", type=int, default=50, help="Stabilize parameters every n steps if they drift off-manifold")
 
-    # wandb args
+    # Wandb args
     parser.add_argument('--wandb', nargs="?", const=True, default=False, help='Enable Weights & Biases logging')
-    parser.add_argument("--wandb_project", type=str, default="hyperbolic-vit")
-    parser.add_argument('--wandb_entity', type=str, default="hyperbolic-vit-team", help="W&B entity (username or team)")
-    parser.add_argument("--wandb_group", type=str, default="kg-experiments", help="Group name for run grouping")
+    parser.add_argument("--wandb_project", type=str, default="hyperbolic-gnn")
+    parser.add_argument('--wandb_entity', type=str, default="your-entity")
+    parser.add_argument("--wandb_group", type=str, default="node-classification")
 
     args = parser.parse_args()
 

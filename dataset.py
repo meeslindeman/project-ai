@@ -1,12 +1,11 @@
 import os
-from os import path
 
 import networkx as nx
 import numpy as np
 import scipy.sparse as sp
 import torch
 
-from data_utils import normalize_feat, rand_train_test_idx
+from data_utils import normalize_feat, rand_train_test_idx, normalize, augment, split_data
 
 DATAPATH = "data/"
 
@@ -15,7 +14,7 @@ class NCDataset(object):
         self.name = name
         self.root = root
         self.graph = {}
-        self.label = None  # expected shape [N, 1] 
+        self.label = None  
 
     def get_idx_split(self, split_type="random", train_prop=0.5, valid_prop=0.25):
         if split_type != "random":
@@ -40,8 +39,12 @@ class NCDataset(object):
 
 def load_nc_dataset(args):
     """
-    args.dataset: 'chameleon' | 'squirrel' | 'film' (Actor) | 'airport' | 'disease_nc'
-    args.no_feat_norm: bool (for chameleon/squirrel)
+    Unified loader for both heterophilous and homophilous datasets.
+    
+    Heterophilous: 'chameleon', 'squirrel', 'actor' (film)
+    Homophilous: 'airport', 'disease'
+    
+    Returns NCDataset object with standardized format.
     """
     global DATAPATH
     DATAPATH = getattr(args, "data_dir", "data/")
@@ -50,12 +53,19 @@ def load_nc_dataset(args):
     if dataname == "actor":
         dataname = "film"  # alias
 
+    # Heterophilous datasets
     if dataname == "film":
         return load_geom_gcn_dataset(dataname)
     if dataname in ("chameleon", "squirrel"):
         return load_wiki_new(dataname, no_feat_norm=getattr(args, "no_feat_norm", False))
+    
+    # Homophilous datasets
+    if dataname == "airport":
+        return load_airport(args)
+    if dataname == "disease":
+        return load_disease(args)
 
-    raise ValueError(f"Invalid dataname: {args.dataset}")
+    raise ValueError(f"Invalid dataset: {args.dataset}")
 
 
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
@@ -65,6 +75,8 @@ def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     shape = torch.Size(sparse_mx.shape)
     return torch.sparse.FloatTensor(indices, values, shape)
 
+
+# ======================== Heterophilous Loaders ========================
 
 def load_geom_gcn_dataset(name):
     """
@@ -114,7 +126,7 @@ def load_geom_gcn_dataset(name):
     features = np.array([feat for _, feat in sorted(G.nodes(data="features"), key=lambda x: x[0])])
     labels = np.array([lab for _, lab in sorted(G.nodes(data="label"), key=lambda x: x[0])], dtype=np.int64)
 
-    # Row-normalize features (as in many geom-gcn loaders)
+    # Row-normalize features
     rowsum = np.array(features.sum(1))
     rowsum = (rowsum == 0) * 1 + rowsum
     r_inv = np.power(rowsum, -1).flatten()
@@ -155,6 +167,124 @@ def load_wiki_new(name, no_feat_norm=False):
     y = torch.as_tensor(labels, dtype=torch.long).view(-1, 1)  # [N,1]
 
     dataset = NCDataset(name)
+    dataset.graph = {
+        "edge_index": edge_index,
+        "node_feat": node_feat,
+        "edge_feat": None,
+        "num_nodes": node_feat.shape[0],
+    }
+    dataset.label = y
+    return dataset
+
+
+# ======================== Homophilous Loaders ========================
+
+def load_airport(args):
+    """
+    Load Airport dataset (homophilous).
+    Returns NCDataset object with standardized format.
+    """
+    import pickle as pkl
+    
+    filepath = os.path.join(DATAPATH, "airport/airport.p")
+    graph = pkl.load(open(filepath, 'rb'))
+    adj = nx.adjacency_matrix(graph)
+    
+    features = np.array([graph.nodes[u]['feat'] for u in graph.nodes()])
+    label_idx = 4
+    labels = features[:, label_idx]
+    features = features[:, :label_idx]
+    
+    # Bin labels
+    from data_utils import bin_feat
+    labels = bin_feat(labels, bins=[7.0/7, 8.0/7, 9.0/7])
+    
+    # Normalize features if requested
+    normalize_feats = getattr(args, "normalize_feats", True)
+    if normalize_feats:
+        features = normalize(features)
+    
+    # Augment features with degree
+    features = augment(adj, torch.tensor(features, dtype=torch.float32), normalize_feats=False)
+    
+    # Convert adjacency to edge_index
+    adj_coo = sp.coo_matrix(adj)
+    edge_index = torch.from_numpy(np.vstack((adj_coo.row, adj_coo.col)).astype(np.int64))
+    
+    node_feat = features  # already a tensor from augment
+    y = torch.tensor(labels, dtype=torch.long).view(-1, 1)
+    
+    dataset = NCDataset("airport")
+    dataset.graph = {
+        "edge_index": edge_index,
+        "node_feat": node_feat,
+        "edge_feat": None,
+        "num_nodes": node_feat.shape[0],
+    }
+    dataset.label = y
+    return dataset
+
+
+def load_disease(args):
+    """
+    Load Disease dataset (homophilous).
+    Returns NCDataset object with standardized format.
+    """
+    import pickle as pkl
+    
+    dataset_str = "disease_nc"
+    
+    # Load edges
+    object_to_idx = {}
+    idx_counter = 0
+    edges = []
+    with open(os.path.join(DATAPATH, f"disease/{dataset_str}.edges.csv"), 'r') as f:
+        all_edges = f.readlines()
+    for line in all_edges:
+        n1, n2 = line.rstrip().split(',')
+        if n1 in object_to_idx:
+            i = object_to_idx[n1]
+        else:
+            i = idx_counter
+            object_to_idx[n1] = i
+            idx_counter += 1
+        if n2 in object_to_idx:
+            j = object_to_idx[n2]
+        else:
+            j = idx_counter
+            object_to_idx[n2] = j
+            idx_counter += 1
+        edges.append((i, j))
+    
+    # Build adjacency matrix
+    adj = np.zeros((len(object_to_idx), len(object_to_idx)))
+    for i, j in edges:
+        adj[i, j] = 1.
+        adj[j, i] = 1.
+    
+    # Load features
+    use_feats = getattr(args, "use_feats", True)
+    if use_feats:
+        features = sp.load_npz(os.path.join(DATAPATH, f"disease/{dataset_str}.feats.npz"))
+        features = features.toarray()
+    else:
+        features = sp.eye(adj.shape[0]).toarray()
+    
+    # Load labels
+    labels = np.load(os.path.join(DATAPATH, f"disease/{dataset_str}.labels.npy"))
+    
+    # Normalize features if requested
+    normalize_feats = getattr(args, "normalize_feats", True)
+    if normalize_feats:
+        features = normalize(features)
+    
+    # Convert to tensors
+    adj_coo = sp.coo_matrix(adj)
+    edge_index = torch.from_numpy(np.vstack((adj_coo.row, adj_coo.col)).astype(np.int64))
+    node_feat = torch.tensor(features, dtype=torch.float32)
+    y = torch.tensor(labels, dtype=torch.long).view(-1, 1)
+    
+    dataset = NCDataset("disease")
     dataset.graph = {
         "edge_index": edge_index,
         "node_feat": node_feat,
