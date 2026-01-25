@@ -19,9 +19,10 @@ Supported datasets:
 
 ## Setup
 
-```bash
-pip install -r requirements.txt
-```
+ If you're using the provided `environment.yml` (recommended): 
+ ```bash conda env create -f environment.yml 
+ conda activate hyperbolic
+ ```
 
 ### Train proposed model
 
