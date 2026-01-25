@@ -9,6 +9,7 @@ from dataset import load_nc_dataset
 from data_utils import eval_acc, get_dataset_split
 from geoopt.optim.radam import RiemannianAdam
 from geoopt.optim.rsgd import RiemannianSGD
+from geoopt import ManifoldParameter
 
 
 def set_seed(seed: int) -> None:
@@ -29,12 +30,58 @@ def get_device():
     )
 
 
+def _optional_class_weights(args, y_train: torch.Tensor, num_classes: int, dtype, device):
+    use_weighting = args.pos_weight or (args.dataset == "disease")
+    if (not use_weighting) or num_classes != 2:
+        return None
+
+    counts = torch.bincount(y_train, minlength=2).to(dtype=torch.float32)
+    # If a class is missing in the train split, don't apply weights.
+    if counts.min().item() <= 0:
+        return None
+
+    # Match typical "pos_weight" semantics: weight positive class by neg/pos
+    w = torch.ones(2, device=device, dtype=dtype)
+    w[1] = (counts[0] / counts[1]).to(dtype=dtype)
+    return w
+
+
+def make_optimizer(model, args):
+    no_decay = ("bias", "scale")
+    decay_params = []
+    nodecay_params = []
+
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if isinstance(p, ManifoldParameter) or any(nd in n for nd in no_decay):
+            nodecay_params.append(p)
+        else:
+            decay_params.append(p)
+
+    param_groups = [
+        {"params": decay_params, "weight_decay": args.wd},
+        {"params": nodecay_params, "weight_decay": 0.0},
+    ]
+
+    if args.optimizer == "Adam":
+        return torch.optim.Adam(param_groups, lr=args.lr)
+    elif args.optimizer == "AdamW":
+        return torch.optim.AdamW(param_groups, lr=args.lr)
+    elif args.optimizer == "RiemannianAdam":
+        return RiemannianAdam(param_groups, lr=args.lr)
+    elif args.optimizer == "RiemannianSGD":
+        return RiemannianSGD(param_groups, lr=args.lr)
+    else:
+        raise ValueError(f"Unknown optimizer: {args.optimizer}")
+
+
 @torch.no_grad()
 def evaluate_split(model, dataset, split_idx, device):
     model.eval()
     x = dataset.graph["node_feat"]
     out = model(x)  # [N, C]
-    y = dataset.label.to(device)
+    y = dataset.label
 
     train_acc = eval_acc(y[split_idx["train"]], out[split_idx["train"]])
     val_acc = eval_acc(y[split_idx["valid"]], out[split_idx["valid"]])
@@ -45,6 +92,7 @@ def evaluate_split(model, dataset, split_idx, device):
 def train_one_split(args):
     device = get_device()
     print(f"Device: {device} | Using model: {args.model}")
+    print(f"Args: {args}")
 
     # Load dataset (works for both heterophilous and homophilous)
     dataset = load_nc_dataset(args)
@@ -126,16 +174,7 @@ def train_one_split(args):
         model = model.double()
         dataset.graph["node_feat"] = dataset.graph["node_feat"].double()
 
-    if args.optimizer == "Adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    elif args.optimizer == "AdamW":
-        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    elif args.optimizer == "RiemannianAdam":
-        optimizer = RiemannianAdam(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    elif args.optimizer == "RiemannianSGD":
-        optimizer = RiemannianSGD(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    else:
-        raise ValueError(f"Unknown optimizer: {args.optimizer}")
+    optimizer = make_optimizer(model, args)
 
     best_val = -1.0
     best_test = -1.0
@@ -155,7 +194,23 @@ def train_one_split(args):
         if y.dim() == 2:
             y = y[:, 0]  # [N]
 
-        loss = F.cross_entropy(out[split_idx["train"]], y[split_idx["train"]])
+        train_idx = split_idx["train"]
+        ytr = y[train_idx]
+
+        # Only affects disease by default (or if you pass --pos_weight), and only for binary tasks.
+        w = _optional_class_weights(
+            args=args,
+            y_train=ytr,
+            num_classes=num_classes,
+            dtype=out.dtype,
+            device=out.device,
+        )
+
+        if w is None:
+            loss = F.cross_entropy(out[train_idx], ytr)
+        else:
+            loss = F.cross_entropy(out[train_idx], ytr, weight=w)
+            
         if not torch.isfinite(loss):
             print(f"Non-finite loss at epoch {epoch}, aborting.")
             break
@@ -230,6 +285,7 @@ if __name__ == "__main__":
     parser.add_argument("--no_feat_norm", action="store_true", help="Don't normalize features (chameleon/squirrel)")
     parser.add_argument("--normalize_feats", action="store_true", default=True, help="Normalize features (airport/disease)")
     parser.add_argument("--use_feats", action="store_true", default=True, help="Use node features (disease)")
+    parser.add_argument("--pos_weight", action="store_true", help="Upweight positive class for binary tasks (enabled by default for disease)")
 
     # Run control
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")
