@@ -1,0 +1,61 @@
+#!/bin/bash
+
+#SBATCH --partition=gpu_mig
+#SBATCH --gpus=1
+#SBATCH --job-name=Train
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=9
+#SBATCH --time=00:10:00
+#SBATCH --output=output/chameleon_%A.out
+
+module purge
+module load 2024
+module load Anaconda3/2024.06-1
+
+source activate hyperbolic
+
+export WANDB_API_KEY=868e3906005e2c816a758fcbc88d5098dabc27be
+export PYTHONPATH=$(pwd)
+
+# -------------------------
+# Choose ONE model here
+# -------------------------
+MODEL=personal   # personal | hypformer | euclidean | euclidean_lorentz
+
+# -------------------------
+# Model configs
+# -------------------------
+
+declare -A CONFIGS
+
+CONFIGS[personal]="--dataset chameleon --model personal --num_heads 2 --hidden_dim 64 --patience 400 \
+  --attn_scope adjs --lr 0.003 --head_fusion midpoint --optimizer RiemannianAdam \
+  --curvature 1.0 --dropout 0.2 --wd 0.001 --reset_params kaiming"
+
+CONFIGS[hypformer]="--dataset chameleon --model hypformer --num_heads 2 --hidden_dim 64 --patience 400 \
+  --attn_scope adjs --lr 0.003 --optimizer RiemannianAdam \
+  --curvature 1.0 --dropout 0.2 --wd 0.001"
+
+CONFIGS[euclidean]="--dataset chameleon --model euclidean --num_heads 2 --hidden_dim 64 --patience 400 \
+  --attn_scope adjs --lr 0.001 --optimizer Adam \
+  --dropout 0.2 --wd 0.001"
+
+CONFIGS[euclidean_lorentz]="--dataset chameleon --model euclidean --lorentz_map True --num_heads 2 --hidden_dim 64 --patience 400 \
+  --attn_scope adjs --lr 0.001 --optimizer Adam \
+  --dropout 0.2 --wd 0.001"
+
+# -------------------------
+# Run splits (single model)
+# -------------------------
+
+echo "=== Running model: $MODEL ==="
+
+for SPLIT in {0..9}; do
+  echo "=== Split $SPLIT ==="
+
+  srun python main.py \
+    --split $SPLIT \
+    --epochs 500 \
+    --log_every 50 \
+    ${CONFIGS[$MODEL]}
+done
