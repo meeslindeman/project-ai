@@ -45,6 +45,8 @@ def _optional_class_weights(args, y_train: torch.Tensor, num_classes: int, dtype
     w[1] = (counts[0] / counts[1]).to(dtype=dtype)
     return w
 
+def count_params(m):
+    return sum(p.numel() for p in m.parameters() if p.requires_grad)
 
 def make_optimizer(model, args):
     no_decay = ("bias", "scale")
@@ -174,6 +176,12 @@ def train_one_split(args):
         model = model.double()
         dataset.graph["node_feat"] = dataset.graph["node_feat"].double()
 
+    for i, mha in enumerate(model.mha_layers):
+        print(f"MHA {i}: {count_params(mha):,}")
+
+    print("Total MHA params:", count_params(model.mha_layers))
+
+
     optimizer = make_optimizer(model, args)
 
     best_val = -1.0
@@ -296,7 +304,7 @@ if __name__ == "__main__":
 
     # Model selection 
     parser.add_argument("--model", type=str, default="personal", choices=["personal", "hypformer", "euclidean"])
-    parser.add_argument("--lorentz_map", action="store_true", help="Use Lorentz mapping for final classification layer (euclidean)")
+    parser.add_argument("--lorentz_map", type=bool, default=False, help="Use Lorentz mapping for final classification layer (euclidean)")
     parser.add_argument("--use_ffn", action="store_true", help="Use FFN after each MHA layer")
 
     # Shared hyperparameters

@@ -38,6 +38,8 @@ class HypformerAttention(nn.Module):
 
         if use_weight:
             self.Wv = nn.ModuleList([HypLinear(manifold, spatial_in, spatial_out) for _ in range(num_heads)])
+
+        self.Wo = HypLinear(manifold, spatial_in, spatial_out)
         
         if self.att_type == 'full':
             self.scale = nn.Parameter(torch.tensor([math.sqrt(out_channels)]))
