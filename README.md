@@ -19,12 +19,27 @@ Supported datasets:
 
 ## Setup
 
- If you're using the provided `environment.yml` (recommended): 
- ```bash conda env create -f environment.yml 
- conda activate hyperbolic
- ```
+If you're using the provided `environment.yml`: 
+```bash
+conda env create -f environment.yml
+conda activate hyperbolic
+```
+
+### HPC cluster (module-based Anaconda)
+
+We used Snellius cluster:
+```bash
+module purge
+module load 2024
+module load Anaconda3/2024.06-1
+
+conda env create -f environment.yml
+conda activate hyperbolic
+```
 
 ### Train proposed model
+
+Run the models using the following command line (example):
 
 ```bash
 python train.py \
@@ -39,7 +54,9 @@ python train.py \
   --lr 5e-3
 ```
 
+Alternatively, specific jobs files are provided in `jobs/`, these are intended for use on the Snellius HPC cluster.
 
+Use files in `metrics/` to calcuate accuracies and std for multiple splits.
 
 ### Key Arguments
 

@@ -8,7 +8,5 @@ external/
 results/
 benchmark/
 logs/
-metrics/
 sweeps/
-jobs/
 plots/
