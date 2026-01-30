@@ -176,12 +176,6 @@ def train_one_split(args):
         model = model.double()
         dataset.graph["node_feat"] = dataset.graph["node_feat"].double()
 
-    for i, mha in enumerate(model.mha_layers):
-        print(f"MHA {i}: {count_params(mha):,}")
-
-    print("Total MHA params:", count_params(model.mha_layers))
-
-
     optimizer = make_optimizer(model, args)
 
     best_val = -1.0
