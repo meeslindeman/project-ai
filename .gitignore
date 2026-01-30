@@ -1,6 +1,5 @@
 __pycache__/
 tutorial/
-*.job
 *.yaml
 output/
 wandb/
