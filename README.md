@@ -1,8 +1,8 @@
-# Hyperbolic Attention Models for Graph Node Classification
+# Hyperbolic Attention Models
 
 ## Introduction
 
-This repository provides a controlled experimental framework for studying hyperbolic attention mechanisms in graph node classification. It compares fully hyperbolic and hybrid hyperbolic–Euclidean attention models against Euclidean baselines, with a focus on isolating the effect of attention geometry while keeping other architectural components minimal.
+This repository provides an experimental framework for studying hyperbolic attention mechanisms in graph node classification. It compares fully hyperbolic and hybrid hyperbolic–Euclidean attention models against Euclidean baselines, with a focus on isolating the effect of attention geometry while keeping other architectural components minimal.
 
 ## Overview
 
