@@ -48,7 +48,7 @@ python train.py \
   --split 0 \
   --hidden_dim 64 \
   --num_layers 2 \
-  --num_heads 1 \
+  --num_heads 2 \
   --curvature 1.0 \
   --optimizer RiemannianAdam \
   --lr 5e-3
